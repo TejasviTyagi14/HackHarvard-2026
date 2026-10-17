@@ -1,0 +1,10 @@
+{
+  "name": "stereo-distance",
+  "private": true,
+  "type": "module",
+  "description": "Two webcams in, distances out: a local stereo-vision site.",
+  "scripts": {
+    "start": "python3 -m http.server 8765",
+    "test": "node --test"
+  }
+}

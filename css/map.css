@@ -1,0 +1,69 @@
+/* Map page: the 3D model on the left, live panels on the right. */
+.mapgrid {
+  display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px;
+  padding: 16px; max-width: 1720px; margin: 0 auto; align-items: start;
+}
+.mapside { display: grid; gap: 12px; min-width: 0; }
+
+.view-card { position: sticky; top: 70px; }
+.view-tools { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
+.seg.small button { font-size: 12px; padding: 3px 9px; }
+.clip { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.clip input { width: 90px; }
+.view3d {
+  position: relative; height: min(72vh, 720px); min-height: 340px;
+  border-radius: 8px; overflow: hidden; background: #0b0e14; border: 1px solid var(--line);
+}
+.view3d canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+.view3d canvas:active { cursor: grabbing; }
+.view3d .placeholder { z-index: 2; }
+.pad { padding: 20px; }
+.labels3d { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.tag3d {
+  position: absolute; left: 0; top: 0; white-space: nowrap;
+  font-size: 11.5px; font-weight: 600; padding: 2px 7px; border-radius: 5px;
+  background: rgba(11, 14, 20, 0.82); border: 1px solid var(--line-2); color: var(--text);
+}
+.tag3d.place { border-color: rgba(251, 146, 60, 0.7); color: #fed7aa; }
+.tag3d.landmark { border-color: rgba(192, 132, 252, 0.6); color: #e9d5ff; }
+.tag3d.start { border-color: rgba(163, 230, 53, 0.6); color: #d9f99d; }
+
+.camview { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 6px; background: #05070b; image-rendering: auto; }
+#camStats { margin: 6px 0 0; min-height: 16px; font-variant-numeric: tabular-nums; }
+.plan { display: block; width: 100%; height: 260px; border-radius: 6px; background: #0b0e14; cursor: crosshair; }
+.legend { color: var(--faint); margin: 6px 0 0; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 3px; vertical-align: -1px; }
+.sw.free { background: #242e40; border: 1px solid #3a4558; }
+.sw.wall { background: #e2e8f0; }
+.sw.you { background: #38bdf8; border-radius: 50%; }
+.sw.place { background: #fb923c; border-radius: 50%; }
+.sw.thing { background: #c084fc; border-radius: 50%; }
+
+.nav-now { font-size: 16px; font-weight: 600; margin: 0 0 10px; min-height: 22px; }
+.mapside .row select { flex: 1; min-width: 0; }
+.row.mark { margin-top: 8px; }
+.row.mark input {
+  flex: 1; min-width: 0; font: inherit; font-size: 13px; color: var(--text);
+  background: var(--bg); border: 1px solid var(--line-2); border-radius: 6px; padding: 5px 8px;
+}
+.mapside ul.pins { margin-top: 8px; }
+.mapside ul.pins li { gap: 10px; }
+
+.talk-mini { display: grid; gap: 10px; }
+.talk-mini .mic { width: 52px; height: 52px; }
+.talk-mini .mic svg { width: 24px; height: 24px; }
+.talk-mini .talk-status { font-size: 13.5px; }
+.talk-mini .talk-log { max-height: 180px; }
+.check.small { font-size: 12.5px; margin: 0; }
+
+@media (max-width: 1100px) {
+  .mapgrid { grid-template-columns: minmax(0, 1fr); }
+  .view-card { position: static; }
+  .view3d { height: 60vh; }
+  .mapside { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+}
+@media (max-width: 720px) {
+  .mapgrid { padding: 12px 16px; }
+  .mapside { grid-template-columns: minmax(0, 1fr); }
+  .view-tools { justify-content: flex-start; }
+}

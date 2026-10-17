@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stereo Map</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='4' y='6' width='24' height='20' rx='3' fill='none' stroke='%2338bdf8' stroke-width='3'/%3E%3Cpath d='M10 20l5-6 4 4 3-3' stroke='%23fb923c' stroke-width='3' fill='none'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/map.css">
+  <script type="importmap">
+    { "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    } }
+  </script>
+</head>
+<body class="mappage">
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"><i></i><i></i></span>
+      <h1>Stereo Map</h1>
+    </div>
+    <nav class="pages" aria-label="Pages">
+      <a href="index.html">Measure</a>
+      <a href="map.html" aria-current="page">Map a building</a>
+    </nav>
+    <div class="seg" role="group" aria-label="Video source">
+      <button type="button" data-src="cameras">Cameras</button>
+      <button type="button" data-src="files">Recording</button>
+      <button type="button" data-src="demo">Demo building</button>
+    </div>
+    <div class="chips" aria-live="polite">
+      <span class="chip" id="chipTrack">Idle</span>
+      <span class="chip" id="chipFloor"></span>
+      <span class="chip" id="chipMap">No map yet</span>
+      <span class="chip" id="chipFps">— fps</span>
+    </div>
+    <div class="actions">
+      <button type="button" class="btn" id="btnMapping" aria-pressed="false" title="Keep tracking where you are, but stop adding to the map">Pause mapping</button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner" role="status" hidden>
+    <span id="bannerText"></span>
+    <button type="button" class="banner-close" id="bannerClose" aria-label="Dismiss">×</button>
+  </div>
+
+  <main class="mapgrid">
+    <section class="card view-card">
+      <div class="card-head">
+        <h2>3D model</h2>
+        <div class="view-tools">
+          <div class="seg small" role="group" aria-label="Camera">
+            <button type="button" data-view="follow" class="active">Follow me</button>
+            <button type="button" data-view="orbit">Free look</button>
+            <button type="button" data-view="top">From above</button>
+          </div>
+          <label class="clip">Hide above <input id="inClip" type="range" min="0.5" max="3" step="0.1" value="2.2"> <span id="clipVal">2.2 m</span></label>
+        </div>
+      </div>
+      <div class="view3d" id="view3d">
+        <div class="placeholder" id="placeholder">
+          <p class="ph-title">Walk around; the building builds up in 3D</p>
+          <p class="ph-sub">Carry the two cameras on their bar, chest-high and pointing where you walk. Turn slowly, keep moving, and look at walls and furniture rather than blank surfaces.</p>
+          <div class="ph-actions">
+            <button type="button" class="btn primary" data-src="cameras">Start mapping with cameras</button>
+            <button type="button" class="btn" data-src="files">Replay a recording…</button>
+            <button type="button" class="btn" data-src="demo">Demo building tour</button>
+          </div>
+          <p class="ph-sub small" id="placeholderNote">Uses the camera spacing, angle and field of view from the measuring page, so calibrate there first.</p>
+        </div>
+      </div>
+      <p class="hint">Drag to look around, scroll to zoom. Click the floor to get directions there. Light blue: where you've walked. Amber: the route.</p>
+    </section>
+
+    <aside class="mapside">
+      <section class="card">
+        <div class="card-head"><h2>Left camera</h2><span class="muted small">green dots: points being tracked</span></div>
+        <canvas id="camView" class="camview" width="320" height="180"></canvas>
+        <p class="muted small" id="camStats"></p>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><h2>Floor plan</h2><span class="muted small">click to go there</span></div>
+        <canvas id="plan" class="plan"></canvas>
+        <p class="legend small"><span class="sw free"></span>free <span class="sw wall"></span>blocked <span class="sw you"></span>you <span class="sw place"></span>places <span class="sw thing"></span>things seen</p>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><h2>Directions</h2></div>
+        <p class="nav-now" id="navNow" aria-live="polite"></p>
+        <div class="row">
+          <select id="destSel" aria-label="Destination"></select>
+          <button type="button" class="btn small primary" id="btnGo">Go</button>
+          <button type="button" class="btn small" id="btnStopNav" hidden>Stop</button>
+        </div>
+        <form class="row mark" id="markForm" autocomplete="off">
+          <input id="markName" type="text" placeholder="Name this spot, e.g. kitchen" aria-label="Name for this spot">
+          <button type="submit" class="btn small">Save spot</button>
+        </form>
+        <ul class="pins" id="placeList"></ul>
+      </section>
+
+      <section class="card talk-mini">
+        <div class="talk-left">
+          <button type="button" class="mic" id="btnMic" data-state="idle" aria-label="Talk" title="Talk (M)">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z"/></svg>
+          </button>
+          <div class="talk-main">
+            <div class="talk-status" id="talkStatus" aria-live="polite"></div>
+            <form class="ask-form" id="askForm" autocomplete="off">
+              <input id="askInput" type="text" placeholder="…or type: take me to the kitchen" aria-label="Type a request">
+              <button type="submit" class="btn small">Send</button>
+            </form>
+            <div class="suggestions">
+              <button type="button" class="suggest" data-ask="Mark this spot as the kitchen">Mark this as kitchen</button>
+              <button type="button" class="suggest" data-ask="Take me back to the start">Back to the start</button>
+              <button type="button" class="suggest" data-ask="Where am I?">Where am I?</button>
+              <button type="button" class="suggest" data-ask="What's in front of me?">What's in front?</button>
+            </div>
+            <label class="check small"><input type="checkbox" id="inSpeak"> Speak directions and answers</label>
+          </div>
+        </div>
+        <ol class="talk-log" id="talkLog" aria-live="polite" aria-label="Conversation"></ol>
+      </section>
+
+      <details class="card" id="cardDemo" hidden open>
+        <summary>Demo building</summary>
+        <p class="help first">Two rendered rooms joined by a doorway, with furniture the demo "detects". The faint dot on the floor plan is where you really are.</p>
+        <div class="row">
+          <button type="button" class="btn small" id="btnTour">Play the tour</button>
+          <button type="button" class="btn small" id="btnWalk">Walk with the arrow keys</button>
+        </div>
+      </details>
+
+      <details class="card">
+        <summary>Mapping settings</summary>
+        <p class="help first" id="rigSummary"></p>
+        <div class="field"><label for="inCamHeight">Cameras' height above the floor</label><div class="input-unit"><input id="inCamHeight" type="number" step="0.05" min="0.2" max="2.5"><span>m</span></div><p class="help">Used until the floor has been seen; then it's measured.</p></div>
+        <div class="field"><label for="inBodyHeight">Your height (taller things are overhead)</label><div class="input-unit"><input id="inBodyHeight" type="number" step="0.05" min="0.3" max="2.5"><span>m</span></div></div>
+        <div class="field"><label for="inStepHeight">Step-over height (lower things don't block)</label><div class="input-unit"><input id="inStepHeight" type="number" step="0.01" min="0.02" max="0.5"><span>m</span></div></div>
+        <div class="field"><label for="inRange">Map out to</label><div class="input-unit"><input id="inRange" type="number" step="0.5" min="1" max="8"><span>m</span></div><p class="help">Stereo depth gets noisy past about 4 m with 12 cm between the cameras.</p></div>
+        <div class="field"><label for="inQuality">Quality</label><select id="inQuality"><option value="fast">Fast (320 px)</option><option value="detailed">Detailed (480 px, slower)</option></select></div>
+        <label class="check"><input type="checkbox" id="inFps60"> Ask the cameras for 60 fps (halves the timing gap between them)</label>
+        <label class="check"><input type="checkbox" id="inLandmarks"> Remember objects (chairs, tables, …) as places to go</label>
+      </details>
+
+      <details class="card">
+        <summary>Map file</summary>
+        <div class="row">
+          <button type="button" class="btn small" id="btnNew">New map</button>
+          <button type="button" class="btn small" id="btnSave">Save map</button>
+          <button type="button" class="btn small" id="btnLoad">Load map…</button>
+          <button type="button" class="btn small" id="btnPly">Export 3D model (.ply)</button>
+        </div>
+        <p class="help">The .ply opens in MeshLab, Blender or CloudCompare. A saved map keeps every keyframe, so it can be rebuilt; when you load one, start from where that mapping began, facing the same way.</p>
+      </details>
+    </aside>
+  </main>
+
+  <input type="file" id="fileInput" accept="video/*" multiple hidden>
+  <input type="file" id="mapFile" accept="application/json,.json" hidden>
+  <script type="module" src="js/mapapp.js"></script>
+</body>
+</html>
