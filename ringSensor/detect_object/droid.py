@@ -11,7 +11,8 @@ it can only read the request and answer. It replies with JSON; the level is chec
 ``parse_level`` before anyone uses it. Any failure (no droid, not logged in, timeout,
 unusable reply) returns ``ok=False`` with the current level unchanged.
 
-Needs the ``droid`` CLI and FACTORY_API_KEY (or a ``droid`` login). Environment:
+Needs the ``droid`` CLI and a Factory login, done once per computer (``open_login_window``
+opens it, ``login_status`` checks it), or FACTORY_API_KEY. Environment:
 DROID_BIN (default "droid"), DROID_MODEL (default "anthropic-latest-fast"),
 DROID_REASONING (optional), DROID_TIMEOUT seconds (default 40).
 """
@@ -20,7 +21,10 @@ from __future__ import annotations
 import json
 import math
 import os
+import shlex
+import shutil
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +34,9 @@ from .detail import PRESETS, DetailModel, parse_level
 MAX_REQUEST_CHARS = 500
 # Keep these short requests out of Factory's cloud session list.
 _RUNTIME_SETTINGS = {"cloudSessionSync": False}
+# Objects that matter in a room (a person, a door, a table close by) have a salience of about 1/3
+# or more (describe.object_salience); their locations are reported from location_rank(1/3) on.
+_MAIN_SALIENCE = 1 / 3
 
 _INSTRUCTIONS = """\
 You control the detail level of detectObject, a stereo-camera system that describes what is in
@@ -50,8 +57,9 @@ Rules:
 - Relative asks move from the current lambda: "more detail" / "a bit more" is about +0.25,
   "less" / "shorter" about -0.25; "much more" / "everything" can go to 1, "only the basics" to 0.
 - Asks for a specific kind of fact pick the smallest lambda that includes it: "warn me about
-  obstacles" -> at least the hazard level, "where are things" -> the locations level, "how is
-  the lighting" -> the lighting level. Never lower lambda below what the request needs.
+  obstacles" -> at least the hazard level, "where are things" -> the main objects' locations
+  level, "how is the lighting" -> the lighting level. Never lower lambda below what the request
+  needs.
 - "Back to normal" is the medium preset.
 - If the request is not about the amount of detail, or is unclear, use null and an empty reply.
 - Do not use tools. Everything you need is in this message.
@@ -66,7 +74,9 @@ def describe_levels(model: DetailModel = DetailModel()) -> str:
         "salient kinds first (main counts by about 0.5).",
         f"- {model.r_hazard:.2f} and up: hazards (obstacles close ahead).",
         f"- {model.r_lighting:.2f} and up: lighting.",
-        f"- {model.r_loc_lo:.2f} to {model.r_loc_hi:.2f}: where individual objects are (direction and distance).",
+        f"- {model.r_loc_lo:.2f} to {model.r_loc_hi:.2f}: where individual objects are (direction and distance), "
+        f"the most salient objects first (main objects' locations by about "
+        f"{model.location_rank(_MAIN_SALIENCE):.2f}).",
         f"- The number of facts grows with lambda: {_facts(model, 0.5)} at 0.5, {_facts(model, 1.0)} at 1.",
         f"- Detector input size grows from {model.plan(0).imgsz} px at 0 to {model.plan(1).imgsz} px at 1, "
         "so higher lambda is slower.",
@@ -140,6 +150,8 @@ class DroidDetail:
                                       capture_output=True, text=True, timeout=self.timeout_s, cwd=cwd)
             except FileNotFoundError:
                 raise DroidError("droid is not installed (or DROID_BIN is wrong)")
+            except OSError as e:          # e.g. DROID_BIN is a folder or not executable
+                raise DroidError(f"cannot run droid: {e.strerror} (check DROID_BIN)")
             except subprocess.TimeoutExpired:
                 raise DroidError(f"Droid took longer than {self.timeout_s:g} s")
         try:
@@ -188,3 +200,53 @@ def decide(answer: dict, current: float) -> DetailDecision:
     except (ValueError, KeyError):
         return DetailDecision(False, current, False, error=f"Droid proposed an unusable level: {level!r}")
     return DetailDecision(True, new, abs(new - current) > 1e-9, reply)
+
+
+# -- logging in (once per computer) ----------------------------------------------
+
+LOGIN_TITLE = "Log in to Droid"
+# droid starts in an empty folder; its first screen is Factory's login. If droid exits by itself
+# the window stays open, so its last words can be read.
+_LOGIN_SCRIPT = 'cd "$1" && "$2"; printf "\\nYou can close this window.\\n"; read _'
+_TERMINALS = (("ptyxis", ("-T", LOGIN_TITLE, "--")), ("gnome-terminal", ("--title", LOGIN_TITLE, "--")),
+              ("konsole", ("-e",)), ("xterm", ("-T", LOGIN_TITLE, "-e")), ("x-terminal-emulator", ("-e",)))
+
+
+def login_status(droid_bin: str | None = None, timeout_s: float = 30.0) -> dict:
+    """{"ready", "installed", "detail"} from ``droid doctor --checks auth`` (about 1 s, no model call)."""
+    exe = droid_bin or os.environ.get("DROID_BIN", "droid")
+    with tempfile.TemporaryDirectory(prefix="droid-detail-") as cwd:
+        try:
+            proc = subprocess.run([exe, "doctor", "--checks", "auth", "--json"], capture_output=True,
+                                  text=True, timeout=timeout_s, cwd=cwd)
+        except FileNotFoundError:
+            return {"ready": False, "installed": False, "detail": "droid is not installed (or DROID_BIN is wrong)"}
+        except OSError as e:
+            return {"ready": False, "installed": False, "detail": f"cannot run droid: {e.strerror} (check DROID_BIN)"}
+        except subprocess.TimeoutExpired:
+            return {"ready": False, "installed": True, "detail": f"droid doctor took longer than {timeout_s:g} s"}
+    try:
+        verify = next(c for c in json.loads(proc.stdout)["results"] if c.get("id") == "auth.verify")
+    except (ValueError, KeyError, TypeError, AttributeError, StopIteration):
+        return {"ready": False, "installed": True, "detail": "droid doctor gave no usable answer"}
+    return {"ready": verify.get("status") == "pass", "installed": True, "detail": str(verify.get("detail") or "")}
+
+
+def open_login_window(droid_bin: str | None = None) -> None:
+    """Opens a terminal window running ``droid``, which starts with Factory's login.
+
+    Raises DroidError when there is no terminal app to open.
+    """
+    exe = droid_bin or os.environ.get("DROID_BIN", "droid")
+    cwd = tempfile.mkdtemp(prefix="droid-login-")      # empty: no project for droid to look at
+    if sys.platform == "darwin":
+        line = json.dumps(f"cd {shlex.quote(cwd)} && {shlex.quote(exe)}", ensure_ascii=False)
+        cmd = ["osascript", "-e", f'tell application "Terminal" to do script {line}',
+               "-e", 'tell application "Terminal" to activate']
+    else:
+        term = next(((path, args) for name, args in _TERMINALS if (path := shutil.which(name))), None)
+        if term is None:
+            raise DroidError("no terminal app found; open a terminal and run: droid")
+        cmd = [term[0], *term[1], "sh", "-c", _LOGIN_SCRIPT, "sh", cwd, exe]
+    subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)

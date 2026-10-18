@@ -38,19 +38,27 @@ python3 -m venv .venv
 .venv/bin/python -m pytest tests           # tests (no cameras or network needed)
 ```
 
+From Files: open this folder, right-click `start_viewer.sh` and choose **Run as a Program**.
+A terminal window opens and the viewer opens in the browser. Keep that window open while you use
+the viewer; closing it stops the viewer. Running it again while it runs just reopens the page.
+If it cannot start, the window stays open with the error and a desktop notification says why.
+
 ## Droid sets the detail level
 
 Droid (Factory's agent) can choose λ while the algorithm runs, from requests like "more detail",
 "just the basics" or "warn me about obstacles":
 
 - **Viewer:** type the request in the **Ask Droid** box under the λ slider. The slider moves to
-  Droid's choice, and the worker applies it from the next frame pair on.
+  Droid's choice (in its 0.05 steps), and the worker applies it from the next frame pair on.
 - **Command line:** add `--droid`, then type requests and press Enter while it runs.
 - **From code:** `DroidDetail().propose(text, current_level)` returns a checked `DetailDecision`
   (`ok`, `level`, `changed`, `reply`). Call `algo.set_detail(decision.level)` when `changed`.
 
-Setup: install the CLI (`curl -fsSL https://app.factory.ai/cli | sh`), create a key at
-https://app.factory.ai/settings/api-keys, and `export FACTORY_API_KEY=fk-...`.
+Setup: install the CLI (`curl -fsSL https://app.factory.ai/cli | sh`), then log in once per
+computer. In the viewer, press **Log in to Droid** under the Ask Droid box: a terminal window opens
+on Factory's login. Press Enter on **Login**, approve it in the browser, then close that window.
+The viewer notices by itself. Instead of logging in, you can run `droid` in a terminal, or
+create a key at https://app.factory.ai/settings/api-keys and `export FACTORY_API_KEY=fk-...`.
 
 Droid runs as `droid exec` in read-only mode, with every tool removed except TodoWrite, from an empty
 temporary folder, so it can only read the request and answer. Its answer is checked

@@ -28,12 +28,13 @@ import numpy as np
 from .capture import list_cameras, open_stereo
 from .config import rig_from_dict
 from .detail import parse_level
-from .droid import DroidDetail
+from .droid import DroidDetail, DroidError, login_status, open_login_window
 from .geometry import RigGeometry
 from .pipeline import DetectObject
 from .types import FocusRegion, StereoRig
 
 INDEX_HTML = Path(__file__).with_name("web") / "index.html"
+SLIDER_STEPS = 20       # the page's λ slider moves in steps of 1/20 (step="0.05" in web/index.html)
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +164,8 @@ class Viewer:
         self._thread: threading.Thread | None = None
         self.droid = DroidDetail()
         self.droid_last: dict | None = None     # the last request Droid handled, for the page
+        self._login: tuple[float, dict] | None = None   # (when checked, Droid's login status)
+        self._login_lock = threading.Lock()
 
     # -- control (HTTP threads) ---------------------------------------------
 
@@ -200,18 +203,32 @@ class Viewer:
         """Droid turns a request ("more detail", "just the basics") into a new detail level.
 
         Runs on the calling HTTP thread (Droid takes a few seconds); the worker picks up the
-        new level between frame pairs, like a slider change. On failure nothing changes.
+        new level between frame pairs, like a slider change. The level is rounded to the
+        slider's steps, so the page shows the level that runs. On failure nothing changes.
         """
         with self.cond:
             current = self.detail
         d = self.droid.propose(request, current)
-        if d.ok and d.changed:
-            self.update({"detail": d.level})
-        result = {"request": request, "ok": d.ok, "level": d.level, "changed": d.changed,
+        level = round(d.level * SLIDER_STEPS) / SLIDER_STEPS if d.changed else d.level
+        changed = abs(level - current) > 1e-9
+        if changed:
+            self.update({"detail": level})
+        result = {"request": request, "ok": d.ok, "level": level, "changed": changed,
                   "reply": d.reply, "error": d.error}
         with self.cond:
             self.droid_last = result
         return result
+
+    def droid_status(self) -> dict:
+        """Whether Droid is logged in, for the page (checked at most every 3 s)."""
+        with self._login_lock:
+            if self._login is None or time.monotonic() - self._login[0] > 3:
+                self._login = (time.monotonic(), login_status(self.droid.droid_bin))
+            return self._login[1]
+
+    def droid_login(self) -> None:
+        """Opens Droid's one-time login in a terminal window (DroidError if there is none)."""
+        open_login_window(self.droid.droid_bin)
 
     def state(self) -> dict:
         with self.cond:
@@ -338,6 +355,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(self.viewer.state())
         elif path == "/api/report.json":
             self._json(self.viewer.state()["report"] or {})
+        elif path == "/api/droid-status":
+            self._json(self.viewer.droid_status())
         elif path == "/stream.mjpg":
             self._stream()
         else:
@@ -358,11 +377,17 @@ class Handler(BaseHTTPRequestHandler):
                 result = self.viewer.ask_droid(str(body["request"]))
                 self._json({**result, "ok": result["ok"]})
                 return
+            elif path == "/api/droid-login":
+                # Opens a window, so JSON only: another site's page cannot send JSON here unasked.
+                if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
+                    self._json({"ok": False, "error": "send JSON"}, HTTPStatus.UNSUPPORTED_MEDIA_TYPE)
+                    return
+                self.viewer.droid_login()
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             self._json({"ok": True})
-        except (ValueError, KeyError, TypeError) as exc:
+        except (ValueError, KeyError, TypeError, DroidError) as exc:
             self._json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
 
     def _stream(self) -> None:

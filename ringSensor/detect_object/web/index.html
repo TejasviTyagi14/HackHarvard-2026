@@ -17,6 +17,7 @@
     }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }   /* else an inline display (the offline panel) keeps it shown */
   body { margin: 0; background: var(--bg); color: var(--ink);
          font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   header { display: flex; align-items: center; gap: 12px; padding: 12px 20px;
@@ -147,7 +148,11 @@
         <input id="droidAsk" type="text" maxlength="500" placeholder="Ask Droid, e.g. “more detail” or “just the basics”" style="flex: 1; min-width: 0">
         <button id="droidGo">Ask Droid</button>
       </div>
-      <p class="hint" id="droidOut">Droid sets λ from what you ask (needs the droid CLI and FACTORY_API_KEY).</p>
+      <p class="hint" id="droidOut">Droid sets λ from what you ask.</p>
+      <div class="row" style="align-items: center; margin-top: 6px">
+        <span class="hint" id="droidState" style="margin: 0; flex: 1">Checking Droid…</span>
+        <button id="droidLogin" hidden>Log in to Droid</button>
+      </div>
     </div>
 
     <div class="panel">
@@ -192,7 +197,9 @@
   <div class="panel" style="max-width:640px">
     <h2>The detectObject server is not running</h2>
     <p>This page is only the screen. The cameras and the detection algorithm run in a small Python
-       server on this computer, and a browser cannot reach USB cameras on its own. Start it once with:</p>
+       server on this computer, and a browser cannot reach USB cameras on its own. Start it once: in Files,
+       open the ringSensor folder, right-click <b>start_viewer.sh</b> and choose <b>Run as a Program</b>, then keep
+       the terminal window that opens (closing it stops the server). Or in a terminal:</p>
     <pre style="background:var(--chip);padding:10px 12px;border-radius:6px;overflow:auto">cd ~/Documents/claude-projects/ringSensor
 .venv/bin/python start_viewer.py</pre>
     <p class="hint">It opens this page by itself at http://127.0.0.1:8770. This page keeps checking and
@@ -376,13 +383,13 @@ $("detail").oninput = (e) => sendDetail(e.target.value);
 // Droid reads the request and picks λ; the server checks the value and applies it like the slider.
 async function askDroid() {
   const q = $("droidAsk").value.trim();
-  if (!q) return;
+  if (!q || $("droidGo").disabled) return;      // one request at a time (Enter too)
   $("droidGo").disabled = true;
   $("droidOut").textContent = "Droid is thinking…";
   try {
     const r = await fetch("/api/detail-request", {method: "POST", headers: {"Content-Type": "application/json"},
                                                     body: JSON.stringify({request: q})}).then((x) => x.json());
-    if (!r.ok) { $("droidOut").textContent = `λ unchanged: ${r.error}`; return; }
+    if (!r.ok) { $("droidOut").textContent = `λ unchanged: ${r.error}`; droidStatus(); return; }
     if (r.changed) { $("detail").value = r.level; $("detailOut").value = Number(r.level).toFixed(2); }
     $("droidOut").textContent = (r.reply || (r.changed ? "Done." : "No change.")) + ` (λ = ${Number(r.level).toFixed(2)})`;
     $("droidAsk").value = "";
@@ -391,6 +398,29 @@ async function askDroid() {
 }
 $("droidGo").onclick = askDroid;
 $("droidAsk").onkeydown = (e) => { if (e.key === "Enter") askDroid(); };
+
+// Droid needs a Factory login once per computer. The button opens Droid's login in a terminal
+// window; the page then checks every 3 s (for up to 10 minutes) until the login is done.
+let droidWaiting = null;
+async function droidStatus() {
+  let s;
+  try { s = await api("/api/droid-status"); }
+  catch (e) { $("droidState").textContent = `Droid status unknown: ${e.message || e}`; return false; }
+  $("droidLogin").hidden = s.ready || !s.installed;
+  if (s.ready || !droidWaiting) $("droidState").textContent = s.ready ? "Droid is logged in." : `Droid is not ready: ${s.detail}.`;
+  return s.ready;
+}
+$("droidLogin").onclick = async () => {
+  try { await api("/api/droid-login", {}); }
+  catch (e) { $("droidState").textContent = `No login window (${e.message || e}). In a terminal, run: droid`; return; }
+  $("droidState").textContent = "In the new window, press Enter on Login and approve it in the browser. Then close that window.";
+  clearInterval(droidWaiting);
+  let checks = 200;
+  droidWaiting = setInterval(async () => {
+    if (await droidStatus() || --checks <= 0) { clearInterval(droidWaiting); droidWaiting = null; }
+  }, 3000);
+};
+droidStatus();
 document.querySelectorAll("[data-detail]").forEach(b => b.onclick = () => sendDetail(b.dataset.detail));
 $("applyRig").onclick = () => api("/api/config", {rig: rigFromForm()}).then(() => showError("")).catch(showError);
 $("applyFocus").onclick = () => api("/api/config", {focus: focusFromForm()}).then(() => showError("")).catch(showError);
