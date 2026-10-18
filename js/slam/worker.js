@@ -13,6 +13,7 @@ let cfg = null, vo = null, world = null, mapping = true;
 let goal = null, planner = null, plannedAt = -Infinity, plannedVersion = -1, plannedFrom = null;
 let traj = [], lastTraj = null, demo = null, lastHere = null;
 let closer = null, needReloc = false, lastReloc = 0, loops = 0;
+let aligned = false, alignTries = 0;
 
 const post = (msg, transfer = []) => self.postMessage(msg, transfer);
 
@@ -24,6 +25,8 @@ function setup(m) {
   closer = new LoopCloser(vo.intr);
   needReloc = false;
   loops = 0;
+  aligned = !!m.demo;
+  alignTries = 0;
   traj = [];
   lastTraj = null;
   planner = null;
@@ -93,7 +96,7 @@ function process(left, right, t, gap, id, extra = {}) {
   post({
     type: 'result', id, status: r.status, x: here.x, z: here.z, y: mp.t[1], heading: headingOf(mp.R), pose: mp,
     inliers: r.inliers, rmse: r.rmse, shiftPx: r.shiftPx, keyframe: !!r.keyframe, timings: r.timings,
-    vo: r.stats, features: r.features, image, size: cfg.size, floor: world.floor, route, mapping, loops, ...extra,
+    vo: r.stats, features: r.features, image, size: cfg.size, floor: world.floor, route, mapping, loops, depthInfo: r.depthInfo, ...extra,
   }, [r.features.buffer, image.buffer]);
   if (loop) post({ type: 'loop', correction: loop.correction, loops });
   if (reloc) post({ type: 'reloc' });
@@ -201,7 +204,27 @@ function demoSeen(d, rigPose) {
 const handlers = {
   init: setup,
   frame(m) {
-    process(Float32Array.from(new Uint8Array(m.left)), Float32Array.from(new Uint8Array(m.right)), m.t, m.gap, m.id);
+    let left = Float32Array.from(new Uint8Array(m.left)), right = Float32Array.from(new Uint8Array(m.right));
+    if (!aligned && vo.status === 'init' && alignTries < 40) {
+      // Real cameras: before tracking, check the pair is in the right order and level.
+      const a = vo.checkAlignment(left, right);
+      alignTries++;
+      if (a.matches >= 8 && a.swapped) {
+        post({ type: 'align', ...a, action: 'swap' });
+        [left, right] = [right, left]; // the page swaps them from the next frame on
+      } else if (a.matches >= 8) {
+        aligned = true;
+        if (Math.abs(a.dy) > 0.6) {
+          cfg.rig = { ...cfg.rig, vOffsetPx: (cfg.rig.vOffsetPx ?? 0) + a.dy };
+          vo = new StereoVO(cfg.rig, cfg.size.w, cfg.size.h, { maxDisp: vo.o.maxDisp });
+          closer = new LoopCloser(vo.intr);
+        }
+        post({ type: 'align', ...a, action: 'ok', vOffsetPx: cfg.rig.vOffsetPx ?? 0 });
+      } else {
+        post({ type: 'align', ...a, action: 'retry', tries: alignTries });
+      }
+    }
+    process(left, right, m.t, m.gap, m.id);
   },
   demo(m) {
     if (m.kind) startDemo(m.kind);

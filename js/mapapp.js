@@ -91,6 +91,7 @@ function onWorker(m) {
     case 'truth': state.truth = m; break;
     case 'loop': state.loops = m.loops; banner(`Recognised a place you'd been before and corrected the map by ${Math.round(m.correction * 100)} cm.`, 'info'); break;
     case 'reloc': banner('Found where you are in the map again.', 'info'); break;
+    case 'align': onAlign(m); break;
     case 'route': state.route = m.route; if (state.nav && m.route?.ok) view3d?.setRoute(m.route.path); drawPlan(); break;
     case 'demoDone': banner('Tour finished. Walk on with the arrow keys (or W A S D), pick a destination on the floor plan, or say "take me back to the start".', 'info'); setDemoButtons('walk'); break;
     case 'saved': downloadBlob(new Blob([m.data], { type: 'application/json' }), `building-map-${stamp()}.json`); break;
@@ -101,6 +102,31 @@ function onWorker(m) {
 }
 
 const stamp = () => new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+
+function onAlign(a) {
+  state.align = a;
+  if (a.action === 'swap') {
+    // The two IC780s look identical to the browser, so their order can come out reversed.
+    state.sources.reverse();
+    rigSettings.deviceIds = [...(rigSettings.deviceIds ?? [])].reverse();
+    saveRig();
+    banner('The left and right cameras were the wrong way round, so I swapped them (the measuring page will use the new order too).', 'info');
+  } else if (a.action === 'ok') {
+    // Remember how far apart vertically the cameras are, in the measuring page's 640-px units.
+    rigSettings.vOffset = a.vOffsetPx * (640 / state.size.w);
+    saveRig();
+    if (Math.abs(a.dy) > 0.6) banner(`The cameras aren't quite level with each other (${Math.abs(a.dy * 640 / state.size.w).toFixed(0)} px); I've corrected for it.`, 'info');
+  } else if (a.tries === 15) {
+    banner(`I can't match the two camera images (${a.matches} matches). Point them at something with texture, a meter or more away, and check both cameras face the same way on the bar.`, 'err');
+  }
+}
+
+function saveRig() {
+  try {
+    const all = JSON.parse(localStorage.getItem(MEASURE_KEY) || '{}');
+    localStorage.setItem(MEASURE_KEY, JSON.stringify({ ...all, deviceIds: rigSettings.deviceIds, vOffset: rigSettings.vOffset }));
+  } catch { /* storage unavailable */ }
+}
 
 function onResult(m) {
   state.busy = false;
@@ -114,6 +140,7 @@ function onResult(m) {
   state.vo = m.vo;
   state.shiftPx = m.shiftPx;
   state.inliers = m.inliers;
+  state.depthInfo = m.depthInfo;
   if (m.status !== 'init') state.pose = { x: m.x, y: m.y, z: m.z, heading: m.heading, R: m.pose.R };
   if (m.seen) {
     state.sceneObjects = m.seen.map((o, i) => ({ ...o, id: i + 1, ground: { x: o.point[0], z: o.point[2] }, quality: 'stereo', reason: null }));
@@ -628,6 +655,13 @@ function refreshChips() {
   setChip('chipFps', state.fps ? `${state.fps.toFixed(0)} fps` : '— fps');
   setChip('chipFloor', { fitted: 'Floor found', assumed: 'Floor assumed', pending: 'Finding the floor…' }[state.floor] ?? '', state.floor === 'fitted' ? 'ok' : '');
   const t = state.timings;
+  if (st === 'init' && state.mode !== 'demo') {
+    const a = state.align, d = state.depthInfo;
+    $('camStats').textContent = !a || a.action === 'retry'
+      ? `Lining up the two cameras… ${a ? `${a.matches} matches so far` : ''}`
+      : d ? `Depth found on ${Math.round(d.matched * 100)}% of the image, ${d.features} usable points (needs 40). Point at something textured 1–4 m away.` : 'Starting…';
+    return;
+  }
   $('camStats').textContent = state.status === 'idle' ? '' : [
     `${state.inliers ?? 0} points tracked`,
     t ? `track ${t.track.toFixed(0)} ms${t.depth ? ` · depth ${t.depth.toFixed(0)} ms` : ''}` : '',

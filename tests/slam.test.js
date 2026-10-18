@@ -156,3 +156,22 @@ test('walking through the demo building: tracking, the map, and a route back', (
   assert.deepEqual(copy.gridSnapshot().data, g.data);
   assert.ok(new Uint8Array(world.toPLY()).length > 100000, 'PLY export');
 });
+
+test('camera check: spots a swapped pair and a vertical offset', () => {
+  const W = 320, H = 180, params = { baselineCm: 12, angleDeg: 0, hfovDeg: 70 };
+  const rig = buildRig(params, { w: W, h: H }), scene = buildingScene();
+  const pose = { R: [1, 0, 0, 0, 1, 0, 0, 0, 1], t: [0, 0, 0.5] };
+  const L = renderGray(rig.left, pose, scene, W, H), R = renderGray(rig.right, pose, scene, W, H);
+  const vo = new StereoVO(params, W, H);
+  const ok = vo.checkAlignment(L, R);
+  assert.ok(ok.matches >= 8 && !ok.swapped && Math.abs(ok.dy) < 0.5, JSON.stringify(ok));
+  assert.equal(vo.checkAlignment(R, L).swapped, true, 'left/right reversed');
+  // Right camera sitting 3 px low: its image content appears 3 rows further down.
+  const low = new Float32Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) low[y * W + x] = R[Math.max(0, y - 3) * W + x];
+  const off = vo.checkAlignment(L, low);
+  assert.ok(Math.abs(off.dy - 3) < 0.6, `dy ${off.dy}`);
+  // …and correcting for it gets depth (and so tracking) going.
+  const fixed = new StereoVO({ ...params, vOffsetPx: off.dy }, W, H);
+  assert.equal(fixed.process({ left: L, right: low, t: 0 }).status, 'ok');
+});

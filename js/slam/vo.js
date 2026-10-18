@@ -12,6 +12,7 @@ import { rectification, remap } from './rectify.js';
 import { disparityBM, localNormalize } from './dense.js';
 import { angleOf, apply, compose, expSO3, identity, invert, logSO3, refinePose } from './se3.js';
 import { describeView } from './loop.js';
+import { GrayFrame, bandSearch } from '../stereo.js';
 
 export const VO_DEFAULTS = {
   levels: 3, win: 7, maxFeatures: 220, minDistance: 12,
@@ -234,8 +235,37 @@ export class StereoVO {
       }
     }
     const lc = describeView(L, w, h, disp, pyr[0], this.intr, this.baseline);
+    let valid = 0;
+    for (let i = 0; i < disp.length; i++) if (disp[i] > 0) valid++;
+    this.depthInfo = { matched: valid / disp.length, features: this.features.length };
     this.kf = { id: this.kfCount++, t, pose, points: Float32Array.from(pts), gray: Uint8Array.from(gray), fuse, lc };
     return this.kf;
+  }
+
+  /**
+   * Does the pair line up? Matches ~30 corners anywhere along a ±16-row band and reports
+   * { matches, disparity (median px), dy (how far the right image sits below the left), swapped }.
+   */
+  checkAlignment(left, right) {
+    const w = this.w, h = this.h;
+    const L = remap(left, w, h, this.rect.mapL), R = remap(right, w, h, this.rect.mapR);
+    const corners = goodFeatures(buildPyramid(L, w, h, 1)[0], { maxCorners: 30, minDistance: 24, border: 14 });
+    const gL = new GrayFrame(w, h, L), gR = new GrayFrame(w, h, R);
+    const dx = [], dy = [];
+    for (let k = 0; k < corners.length; k += 2) {
+      const m = bandSearch(gL, gR, corners[k], corners[k + 1], { r: 6, band: 16 });
+      if (!m.ok || m.score < 0.85 || m.margin < 0.05) continue;
+      const back = bandSearch(gR, gL, m.uB, m.vB, { r: 6, band: 16 });
+      if (!back.ok || Math.abs(back.uB - m.uA) > 1.5 || Math.abs(back.vB - m.vA) > 1.5) continue;
+      dx.push(m.uA - m.uB);
+      dy.push(m.vB - m.vA);
+    }
+    const med = (a) => [...a].sort((p, q) => p - q)[a.length >> 1];
+    return {
+      matches: dx.length, disparity: dx.length ? med(dx) : null, dy: dy.length ? med(dy) : 0,
+      // In the right order, nearly everything sits further left in the right image.
+      swapped: dx.length >= 8 && dx.filter((d) => d < -0.5).length > 0.6 * dx.length,
+    };
   }
 
   /** Place-recognition description of the newest frame (for relocalising when lost). */
@@ -271,7 +301,7 @@ export class StereoVO {
     this.features.forEach((f, i) => { features[2 * i] = f.u; features[2 * i + 1] = f.v; });
     return {
       status: this.status, pose: this.pose, inliers, rmse, shiftPx, keyframe, features,
-      image: L, timings: { ...timings, total: now() - t0 }, stats: this.stats,
+      image: L, timings: { ...timings, total: now() - t0 }, stats: this.stats, depthInfo: this.depthInfo ?? null,
     };
   }
 }
