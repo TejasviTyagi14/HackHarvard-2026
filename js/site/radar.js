@@ -764,7 +764,9 @@ export function mountRadar(section) {
       if (!st.active || reduced) pulseStatic();
     }
     if (r.intent === 'detail') { droid.open(); return; }
-    voice.say(r.text).catch(() => {});
+    // An answer always gets said in full: spoken updates wait until it's done.
+    st.answering = true;
+    voice.say(r.text).catch(() => {}).finally(() => { st.answering = false; });
   }
   function ask(q) {
     q = q.trim();
@@ -800,15 +802,23 @@ export function mountRadar(section) {
   const UPDATE_MS = 5000;
   let updTimer = 0;
   function sayUpdate() {
-    if (!st.data || !st.active || st.listening) return;
-    // Short enough to say within the 5 s: the detail level's "objects per spoken update", no summary.
+    if (!st.data || !st.active || st.listening || st.answering) return;
+    // Short enough to say within the 5 s: the detail level's "objects per spoken update", no summary,
+    // and none of the conversational tail ("2 more farther away. Say "what else"...").
     const d = st.detail, detail = { ...d, maxItems: d.updateItems, summary: false };
     const r = answer("What's in front of me?", { ...scene(), detail }, {});
+    const text = r.text.replace(/\s*\d+ more (?:farther|further) away\.?/i, '').replace(/\s*Say "what else"[^.]*\./i, '').trim() || r.text;
     $('caption').innerHTML = '';
-    $('caption').append(el('div', 'rs-q', '&gt; update'), el('div', 'rs-a', escapeHtml(r.text)));
+    $('caption').append(el('div', 'rs-q', '&gt; update'), el('div', 'rs-a', escapeHtml(text)));
     if (r.focus != null) { st.pulse = { id: r.focus, t: performance.now() }; if (reduced) pulseStatic(); }
-    // The caption always refreshes; the voice waits for the last update to finish rather than cutting it off.
-    if (!voice.speaking) voice.say(r.text, { interrupt: false }).catch(() => {});
+    // Chrome on macOS sometimes leaves speech paused, which silently swallows everything after it.
+    if ('speechSynthesis' in window && speechSynthesis.paused) speechSynthesis.resume();
+    // A new update replaces one still being said (it's stale by now) rather than queueing behind it.
+    // Say the two nearest in clipped form ("Chair, 1.8 meters, 12 o'clock") so it fits in the 5 s;
+    // the caption keeps the full sentences.
+    const spoken = text.split(/(?<=[.!?])\s+/).slice(0, 2)
+      .map((x) => x.replace(/^(?:an?|the) /i, '').replace(/, at (\d+ o'clock)/g, ', $1')).join(' ');
+    voice.say(spoken, { interrupt: true, rate: 1.25 }).catch(() => {});
   }
   function setUpdates(on) {
     clearInterval(updTimer);
@@ -861,7 +871,11 @@ export function mountRadar(section) {
     const res = await listener.listen({ onInterim: (t) => { $('caption').innerHTML = `<span class="rs-mut">${escapeHtml(t)}</span>`; } });
     setListening(false);
     stopAudio();
-    if (res.alternatives) return respond(answerBest(res.alternatives, scene(), st.ctx), res.alternatives[0]);
+    if (res.alternatives) {
+      // Let macOS switch the audio back from the microphone before answering out loud.
+      await new Promise((r) => setTimeout(r, 150));
+      return respond(answerBest(res.alternatives, scene(), st.ctx), res.alternatives[0]);
+    }
     $('caption').innerHTML = '<span class="rs-mut">Ask the rig about the room.</span>';
     if (res.error === 'not-allowed' || res.error === 'service-not-allowed') msg('Speech recognition was blocked. Type a question below.');
     else if (res.error === 'no-speech') msg("Didn't hear anything. Try again, or type below.");

@@ -25,7 +25,12 @@ export class Voice {
   say(text, { interrupt = true, rate = 1.05 } = {}) {
     if (this.output) return this.output.say(text, { interrupt });
     if (!this.supported || !text) return Promise.resolve();
-    if (interrupt) speechSynthesis.cancel();
+    // Chrome drops an utterance queued in the same moment as a cancel(), and on macOS can be left
+    // paused (after the microphone, say), which silently swallows everything: only cancel what's
+    // actually playing, give the cancel a moment to land, and wake it up first.
+    const busy = speechSynthesis.speaking || speechSynthesis.pending;
+    if (interrupt && busy) speechSynthesis.cancel();
+    if (speechSynthesis.paused) speechSynthesis.resume();
     const parts = text.split(/(?<=[.!?:;])\s+/).filter(Boolean);
     return new Promise((resolve) => {
       let left = parts.length, done = false;
@@ -38,15 +43,20 @@ export class Voice {
       // onend occasionally never fires in Chrome; don't wait forever.
       const timer = setTimeout(finish, 2000 + text.length * 90);
       // With no usable voice, nothing ever starts; don't hold up the conversation for it.
-      setTimeout(() => { if (!speechSynthesis.speaking && !speechSynthesis.pending) finish(); }, 1200);
-      for (const p of parts) {
-        const u = new SpeechSynthesisUtterance(p);
-        u.rate = rate;
-        u.lang = 'en-US';
-        u.onend = () => { if (--left <= 0) finish(); };
-        u.onerror = (e) => { if (e.error === 'interrupted' || e.error === 'canceled' || --left <= 0) finish(); };
-        speechSynthesis.speak(u);
-      }
+      setTimeout(() => { if (!speechSynthesis.speaking && !speechSynthesis.pending) finish(); }, 1300);
+      const speak = () => {
+        for (const p of parts) {
+          const u = new SpeechSynthesisUtterance(p);
+          u.rate = rate;
+          u.lang = 'en-US';
+          u.onend = () => { if (--left <= 0) finish(); };
+          u.onerror = (e) => { if (e.error === 'interrupted' || e.error === 'canceled' || --left <= 0) finish(); };
+          speechSynthesis.speak(u);
+        }
+      };
+      // Straight away when nothing was cancelled (Safari wants the first one inside the tap itself).
+      if (interrupt && busy) setTimeout(speak, 80);
+      else speak();
     });
   }
 
