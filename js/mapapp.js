@@ -16,7 +16,7 @@ import { downloadBlob } from './recorder.js';
 const $ = (id) => document.getElementById(id);
 const MEASURE_KEY = 'stereo-distance:v1';
 const MAP_KEY = 'stereo-map:v1';
-const MAP_DEFAULTS = { cameras: 'two', camHeight: 1.3, bodyHeight: 1.9, stepHeight: 0.1, rangeMax: 10, quality: 'fast', landmarks: true, fps60: true };
+const MAP_DEFAULTS = { turnFrom: 'compass', cameras: 'two', camHeight: 1.3, bodyHeight: 1.9, stepHeight: 0.1, rangeMax: 10, quality: 'fast', landmarks: true, fps60: true };
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -77,7 +77,7 @@ function initWorker(size) {
   const vOffsetPx = mono ? 0 : (rigSettings.vOffset || 0) * (size.w / 640);
   document.querySelector('.campair figure:last-child').hidden = mono;
   state.worker.postMessage({
-    type: 'init', size, mono,
+    type: 'init', size, mono, turnFrom: settings.turnFrom,
     rig: { baselineCm: rigSettings.baselineCm, angleDeg: mono ? 0 : rigSettings.angleDeg, hfovDeg: rigSettings.hfovDeg, angleSplit: rigSettings.angleSplit, vOffsetPx },
     world: { camHeight: settings.camHeight, tiltDeg: rigSettings.tiltDeg || 0, bodyHeight: settings.bodyHeight, stepHeight: settings.stepHeight, rangeMax: settings.rangeMax },
   });
@@ -155,6 +155,7 @@ function onResult(m) {
   state.inliers = m.inliers;
   state.depthInfo = m.depthInfo;
   if (m.status !== 'init') state.pose = { x: m.x, y: m.y, z: m.z, heading: m.heading, R: m.pose.R };
+  if (m.compass) drawCompass(m.compass);
   if (m.seen) {
     state.sceneObjects = m.seen.map((o, i) => ({ ...o, id: i + 1, ground: { x: o.point[0], z: o.point[2] }, quality: 'stereo', reason: null }));
     state.sceneAt = now;
@@ -361,6 +362,18 @@ async function finishDetect(job, result) {
   const dets = await job.promise.catch(() => []);
   if (result.status !== 'ok' || !dets.length) return;
   state.worker.postMessage({ type: 'objects', id: job.id, dets });
+}
+
+/** The visual compass: which way the camera faces compared with when it started (0°), and its tilt. */
+function drawCompass(c) {
+  const el = $('compass');
+  if (!el) return;
+  el.hidden = false;
+  el.classList.toggle('dim', !c.ok);
+  $('compassNeedle').setAttribute('transform', `rotate(${c.heading.toFixed(1)} 32 32)`);
+  const deg = ((Math.round(c.heading) % 360) + 360) % 360;
+  $('compassText').textContent = `${deg}°`;
+  $('compassTilt').textContent = `tilt ${c.pitch >= 0 ? '+' : '−'}${Math.abs(c.pitch).toFixed(0)}°`;
 }
 
 /** Objects the worker just measured, camera-relative: for "what's in front of me". */
@@ -879,6 +892,8 @@ function wire() {
   $('inShowPoints').addEventListener('change', (e) => view3d?.setPointsVisible(e.target.checked));
   $('inShowObjects').addEventListener('change', (e) => view3d?.setObjectsVisible(e.target.checked));
   $('inShowWalls').addEventListener('change', (e) => view3d?.setWallsVisible(e.target.checked));
+  $('inTurnFrom').value = settings.turnFrom;
+  $('inTurnFrom').addEventListener('change', (e) => { settings.turnFrom = e.target.value; save(MAP_KEY, settings); banner('Applies the next time you start the cameras or the demo.', 'info'); });
   $('inClip').addEventListener('input', (e) => { view3d?.setClipHeight(Number(e.target.value)); $('clipVal').textContent = `${Number(e.target.value).toFixed(1)} m`; });
   $('btnMic').addEventListener('click', () => talk.toggle());
   $('askForm').addEventListener('submit', (e) => { e.preventDefault(); const q = $('askInput').value.trim(); if (q) { $('askInput').value = ''; talk.ask(q); } });

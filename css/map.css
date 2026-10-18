@@ -71,3 +71,14 @@
   .mapside { grid-template-columns: minmax(0, 1fr); }
   .view-tools { justify-content: flex-start; }
 }
+
+/* Visual compass over the 3D view */
+.compass { position: absolute; top: 10px; left: 10px; display: flex; align-items: center; gap: 8px; padding: 6px 10px 6px 6px; border-radius: 10px; background: rgba(11, 14, 20, 0.72); border: 1px solid var(--line, #263042); z-index: 2; pointer-events: none; }
+.compass svg { width: 52px; height: 52px; }
+.compass .ring { fill: none; stroke: #475569; stroke-width: 2; }
+.compass .n { fill: #94a3b8; font: 600 8px system-ui; text-anchor: middle; dominant-baseline: middle; }
+.compass .needle { fill: #38bdf8; }
+.compass div { display: flex; flex-direction: column; line-height: 1.2; }
+.compass b { font-size: 16px; color: #e2e8f0; font-variant-numeric: tabular-nums; }
+.compass span { font-size: 11px; color: #94a3b8; }
+.compass.dim .needle { fill: #64748b; }

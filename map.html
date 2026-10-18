@@ -62,6 +62,10 @@
         </div>
       </div>
       <div class="view3d" id="view3d">
+        <div class="compass" id="compass" hidden title="Visual compass: 0° is the way the camera faced when it started">
+          <svg viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="29" class="ring"/><text x="32" y="13" class="n">0</text><text x="55" y="35" class="n">90</text><text x="32" y="59" class="n">180</text><text x="9" y="35" class="n">270</text><g id="compassNeedle"><path d="M32 12 L37 33 L32 30 L27 33 Z" class="needle"/></g></svg>
+          <div><b id="compassText">0°</b><span id="compassTilt"></span></div>
+        </div>
         <div class="placeholder" id="placeholder">
           <p class="ph-title">Walk around; the building builds up in 3D</p>
           <p class="ph-sub">Carry the two cameras on their bar, chest-high and pointing where you walk. Turn slowly, keep moving, and look at walls and furniture rather than blank surfaces.</p>
@@ -149,6 +153,7 @@
         <div class="field"><label for="inStepHeight">Step-over height (lower things don't block)</label><div class="input-unit"><input id="inStepHeight" type="number" step="0.01" min="0.02" max="0.5"><span>m</span></div></div>
         <div class="field"><label for="inRange">Map out to</label><div class="input-unit"><input id="inRange" type="number" step="0.5" min="1" max="15"><span>m</span></div><p class="help">The one-camera depth model holds up to about 10 m indoors. With two cameras 12 cm apart, depth gets noisy past about 5 m.</p></div>
         <div class="field"><label for="inQuality">Quality</label><select id="inQuality"><option value="fast">Fast (320 px)</option><option value="detailed">Detailed (480 px, slower)</option></select></div>
+        <div class="field"><label for="inTurnFrom">Turning from</label><select id="inTurnFrom"><option value="compass">The whole picture (visual compass)</option><option value="points">The tracked points only</option></select><p class="help">The compass follows how the whole image shifts, so it keeps turning with you even when there are few points to track. Distance walked always comes from the points.</p></div>
         <label class="check"><input type="checkbox" id="inFps60"> Ask the cameras for 60 fps (halves the timing gap between them)</label>
         <label class="check"><input type="checkbox" id="inLandmarks"> Find objects (chairs, tables, …): add them to the 3D model at their size, and as places to go</label>
       </details>

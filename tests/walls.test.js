@@ -39,3 +39,18 @@ test("people's feet move the floor to where they stand", () => {
   assert.equal(w.floor, 'people');
   assert.ok(Math.abs(w.toMap([0, 1.5, 2])[1]) < 1e-9); // a point 1.5 m below the camera is on the floor now
 });
+
+test('walls nearly square to each other are made square, and pieces in line are joined', async () => {
+  const { squareUp } = await import('../js/slam/walls.js');
+  const deg = Math.PI / 180;
+  const seg = (x, z, a, L) => ({ x0: x, z0: z, x1: x + L * Math.cos(a * deg), z1: z + L * Math.sin(a * deg), top: 2.4, n: 20 });
+  const { walls, axis } = squareUp([seg(0, 0, 3, 4), seg(4, 0, 88, 3), seg(0, 3, 1, 1.5), seg(1.7, 3.02, 2, 2), seg(1, 1, 45, 1)]);
+  const ang = (w) => Math.atan2(w.z1 - w.z0, w.x1 - w.x0) / deg;
+  const sq = walls.filter((w) => w.square);
+  for (const w of sq) {
+    const d = ((ang(w) - axis / deg) % 90 + 90) % 90;
+    assert.ok(d < 1e-6 || 90 - d < 1e-6, `wall at ${ang(w).toFixed(2)}°`);
+  }
+  assert.equal(walls.length, 4, 'the two in-line pieces became one');
+  assert.ok(walls.some((w) => !w.square), 'a 45° wall stays as it is');
+});

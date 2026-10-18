@@ -8,7 +8,7 @@ import { GoalPlanner } from './plan.js';
 import { LoopCloser } from './closer.js';
 import { estimateRotation } from './loop.js';
 import { measureBox } from './objects.js';
-import { extractWalls } from './walls.js';
+import { extractWalls, squareUp } from './walls.js';
 import { rawToRect, remap } from './rectify.js';
 import { disparityBM, localNormalize } from './dense.js';
 import { buildingScene, firstHit, poseAt, renderGray, tour, walk } from './building.js';
@@ -21,7 +21,7 @@ let closer = null, needReloc = false, lastReloc = 0, loops = 0;
 let aligned = false, alignTries = 0, rotated = false;
 let mono = false, depthPipe = null, depthBusy = Promise.resolve();
 const recent = new Map(); // frame id → { left, L, R, pose }, for placing objects detected in it
-let walls = [], lastWalls = 0, levels = 0;
+let walls = [], lastWalls = 0, levels = 0, wallAxis = null;
 
 const TRANSFORMERS = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.1';
 const DEPTH_MODEL = 'onnx-community/metric3d-vit-small';
@@ -67,12 +67,14 @@ function setup(m) {
   cfg = m;
   const { w, h } = m.size;
   const cloudRange = m.world.rangeMax ?? 10; // map out to here
-  vo = new StereoVO(m.rig, w, h, { maxDisp: Math.round((64 * w) / 320), cloudRange });
+  const turnFrom = m.turnFrom ?? 'compass';
+  vo = new StereoVO(m.rig, w, h, { maxDisp: Math.round((64 * w) / 320), cloudRange, turnFrom });
   world = new World(m.world);
   closer = new LoopCloser(vo.intr);
   mono = !!m.mono;
-  if (mono) vo = new StereoVO(m.rig, w, h, { mono: true, maxRange: 15, cloudRange }); // the depth model sees far
+  if (mono) vo = new StereoVO(m.rig, w, h, { mono: true, maxRange: 15, cloudRange, turnFrom }); // the depth model sees far
   walls = [];
+  wallAxis = null;
   lastWalls = levels = 0;
   world.o.minHits = mono ? 3 : 2; // model depth is noisier than stereo: want more views per voxel
   recent.clear();
@@ -158,7 +160,8 @@ function process(left, right, t, gap, id, extra = {}, depth = null) {
   post({
     type: 'result', id, status: r.status, x: here.x, z: here.z, y: mp.t[1], heading: headingOf(mp.R), pose: mp,
     inliers: r.inliers, rmse: r.rmse, shiftPx: r.shiftPx, keyframe: !!r.keyframe, timings: r.timings,
-    vo: r.stats, features: r.features, image, imageR, size: cfg.size, floor: world.floor, route, mapping, loops, depthInfo: r.depthInfo, ...extra,
+    vo: r.stats, features: r.features, image, imageR, size: cfg.size, floor: world.floor, route, mapping, loops, depthInfo: r.depthInfo,
+    compass: r.compass && { heading: r.compass.heading, pitch: r.compass.pitch, roll: r.compass.roll, ok: r.compass.ok }, ...extra,
   }, [r.features.buffer, image.buffer, imageR.buffer]);
   if (loop) post({ type: 'loop', correction: loop.correction, loops });
   if (reloc) post({ type: 'reloc' });
@@ -179,7 +182,7 @@ function sendMap(full = false) {
   const now = performance.now();
   if (full || now - lastWalls > 2000) {
     lastWalls = now;
-    walls = extractWalls(world.voxels.values(), { minHits: world.o.minHits, exclude: world.objects.lasting() });
+    ({ walls, axis: wallAxis } = squareUp(extractWalls(world.voxels.values(), { minHits: world.o.minHits, exclude: world.objects.lasting() }), wallAxis));
   }
   if (full) {
     world.pendingPoints = [...world.voxels.values()].filter((v) => v.n >= world.o.minHits);
@@ -312,7 +315,7 @@ const handlers = {
         rotated = true;
         cfg.rig = { ...cfg.rig, Rrel: rot.R, vOffsetPx: 0 };
         // The measured yaw only roughly fixes the scale, so let far points count for tracking.
-        vo = new StereoVO(cfg.rig, cfg.size.w, cfg.size.h, { maxDisp: vo.o.maxDisp, maxRange: 12, cloudRange: vo.o.cloudRange });
+        vo = new StereoVO(cfg.rig, cfg.size.w, cfg.size.h, { maxDisp: vo.o.maxDisp, maxRange: 12, cloudRange: vo.o.cloudRange, turnFrom: vo.o.turnFrom });
         closer = new LoopCloser(vo.intr);
         post({ type: 'rotation', yaw: rot.yaw, pitch: rot.pitch, roll: rot.roll, angle: rot.angle, inliers: rot.inliers, R: rot.R });
       } else {
@@ -334,7 +337,7 @@ const handlers = {
         aligned = true;
         if (Math.abs(a.dy) > 0.6) {
           cfg.rig = { ...cfg.rig, vOffsetPx: (cfg.rig.vOffsetPx ?? 0) + a.dy };
-          vo = new StereoVO(cfg.rig, cfg.size.w, cfg.size.h, { maxDisp: vo.o.maxDisp, maxRange: vo.o.maxRange, cloudRange: vo.o.cloudRange });
+          vo = new StereoVO(cfg.rig, cfg.size.w, cfg.size.h, { maxDisp: vo.o.maxDisp, maxRange: vo.o.maxRange, cloudRange: vo.o.cloudRange, turnFrom: vo.o.turnFrom });
           closer = new LoopCloser(vo.intr);
         }
         post({ type: 'align', ...a, action: 'ok', vOffsetPx: cfg.rig.vOffsetPx ?? 0 });

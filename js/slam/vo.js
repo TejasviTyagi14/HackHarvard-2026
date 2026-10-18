@@ -2,6 +2,9 @@
 //
 // Every frame: rectify the pair, follow a few hundred corner features in the left image with
 // optical flow (KLT), and solve the camera pose from where their known 3D points now appear.
+// The turn comes from the visual compass (compass.js: how the whole picture shifts), and the
+// tracked points only say how far you've walked; if the compass can't see enough (a blank wall),
+// the points give the turn too.
 // Keyframes (after enough movement): dense stereo depth, which gives new features their 3D
 // position and the keyframe's point cloud for the map. Only the left camera is used for
 // tracking, so the two webcams not being shutter-synced only matters for keyframe depth; those
@@ -10,8 +13,9 @@
 import { buildPyramid, goodFeatures, trackFB } from './klt.js';
 import { rectification, remap } from './rectify.js';
 import { disparityBM, localNormalize } from './dense.js';
-import { angleOf, apply, compose, expSO3, identity, invert, logSO3, refinePose } from './se3.js';
+import { angleOf, apply, compose, expSO3, identity, invert, logSO3, refinePose, tr3 } from './se3.js';
 import { describeView } from './loop.js';
+import { VisualCompass } from './compass.js';
 import { GrayFrame, bandSearch } from '../stereo.js';
 
 export const VO_DEFAULTS = {
@@ -19,6 +23,8 @@ export const VO_DEFAULTS = {
   kfDistance: 0.25, kfAngleDeg: 8, kfMinInterval: 0.15, kfMaxInterval: 1.0,
   minStart: 10, minInliers: 10, maxDisp: 64, minRange: 0.4, maxRange: 6,
   cloudStride: 3, cloudRange: 4.5, maxSyncPx: 1.0, lostTimeout: 8,
+  turnFrom: 'compass', // 'compass' (whole image) or 'points' (the tracked features)
+  compassWeight: 15, // the compass counts as much as this many tracked points for the turn
 };
 
 export class StereoVO {
@@ -43,7 +49,8 @@ export class StereoVO {
     this.lastT = null;
     this.status = 'init';
     this.lostAt = null;
-    this.stats = { syncSkips: 0, reanchors: 0 };
+    this.stats = { syncSkips: 0, reanchors: 0, compassResyncs: 0 };
+    this.compass = new VisualCompass(this.intr);
   }
 
   project(Tcw, X) {
@@ -68,8 +75,17 @@ export class StereoVO {
     const dt = this.lastT == null ? 1 / 15 : Math.max(1e-3, t - this.lastT);
     let keyframe = null, inliers = 0, rmse = 0, shiftPx = 0;
     const timings = { track: 0, depth: 0 };
+    // Where the camera should be if it kept moving as it was.
+    const lost = this.status === 'lost';
+    const step = lost ? identity() : { R: expSO3(this.vel.w.map((x) => x * dt)), t: this.vel.v.map((x) => x * dt) };
+    // The compass runs on every frame, from the first one: that's heading 0°.
+    let comp = this.compass.update(pyr, this.status === 'ok' ? compose(this.pose, step).t : null);
+    const useCompass = o.turnFrom === 'compass' && comp.ok;
+    this.heading = comp;
+    timings.compass = now() - t0;
 
     if (this.status === 'init') {
+      if (o.turnFrom === 'compass') this.pose = { R: comp.R, t: this.pose.t };
       if (o.mono && !D) {
         this.needDepth = true;
         return this.result({ keyframe: null, inliers: 0, L, timings, t0 });
@@ -88,9 +104,8 @@ export class StereoVO {
       return this.result({ keyframe, inliers: this.features.length, L, timings, t0 });
     }
 
-    // Where the camera should be if it kept moving as it was.
-    const lost = this.status === 'lost';
-    const step = lost ? identity() : { R: expSO3(this.vel.w.map((x) => x * dt)), t: this.vel.v.map((x) => x * dt) };
+    // (The compass's turn isn't used for this guess: with a slightly wrong field of view it puts
+    // the features further off than the steady-motion guess does.)
     const predWc = compose(this.pose, step);
     const predCw = invert(predWc);
 
@@ -113,7 +128,27 @@ export class StereoVO {
       return { X, uv };
     };
     let poseCw = null, keep = [];
-    if (idx.length >= o.minInliers) {
+    if (useCompass && idx.length >= o.minInliers) {
+      // One solve with both: the whole picture's shift (mostly the turn) and the tracked points
+      // (mostly how far you've walked). A small step sideways looks much like a small turn, so
+      // solving them apart lets the two drift together; solved together they keep each other right.
+      const extra = (Rcw, tcw) => this.compass.poseTerms(Rcw, tcw, o.compassWeight, this.intr.f);
+      const a = pack(idx);
+      const r = refinePose(predCw, a.X, a.uv, this.intr, { huber: 2, extra });
+      const good = idx.filter((_, j) => r.err[j] < 3);
+      if (good.length >= o.minInliers) {
+        const b = pack(good);
+        const r2 = refinePose(r.pose, b.X, b.uv, this.intr, { huber: 1, extra });
+        keep = good.filter((_, j) => r2.err[j] < 2);
+        if (keep.length >= o.minInliers) {
+          poseCw = r2.pose;
+          rmse = r2.rmse;
+          this.compass.adopt(tr3(poseCw.R));
+          this.heading = comp = this.compass.reading();
+        }
+      }
+    }
+    if (!poseCw && idx.length >= o.minInliers) {
       // Robust pass on everything, then a tighter one on the points that agree.
       const a = pack(idx);
       let r = refinePose(predCw, a.X, a.uv, this.intr, { huber: 2 });
@@ -126,6 +161,11 @@ export class StereoVO {
         if (keep.length >= o.minInliers) {
           poseCw = r2.pose;
           rmse = r2.rmse;
+          // The points disagreed with the compass (or it couldn't see): it carries on from them.
+          if (o.turnFrom === 'compass') {
+            this.compass.resync(invert(poseCw).R);
+            this.stats.compassResyncs++;
+          }
         }
       }
     }
@@ -135,6 +175,8 @@ export class StereoVO {
       // Lost: keep the last good image and pose, and keep trying to find the features again.
       if (!lost) this.lostAt = t;
       this.status = 'lost';
+      // Still turning with you: the compass keeps the heading even with no points to follow.
+      if (useCompass) this.pose = { R: comp.R, t: this.pose.t };
       this.vel = { w: [0, 0, 0], v: [0, 0, 0] };
       if (t - this.lostAt > o.lostTimeout) {
         // Start again from the last known pose; the map may get a seam here.
@@ -281,6 +323,7 @@ export class StereoVO {
     let valid = 0;
     for (let i = 0; i < disp.length; i++) if (disp[i] > 0) valid++;
     this.depthInfo = { matched: valid / disp.length, features: this.features.length };
+    this.compass.setKeyframe(pyr, disp, fB, pose);
     this.kf = { id: this.kfCount++, t, pose, points: Float32Array.from(pts), gray: Uint8Array.from(gray), fuse, lc };
     return this.kf;
   }
@@ -326,6 +369,7 @@ export class StereoVO {
     this.features = [];
     this.pose = pose;
     this.vel = { w: [0, 0, 0], v: [0, 0, 0] };
+    this.compass.resync(pose.R);
     const kf = this.makeKeyframe(L, R, pyr, pose, t, true);
     this.status = 'ok';
     this.prevPyr = pyr;
@@ -336,6 +380,7 @@ export class StereoVO {
   /** Moves the current pose and map points by a correction (after a loop closure). */
   shift(C) {
     this.pose = compose(C, this.pose);
+    this.compass.resync(this.pose.R);
     for (const f of this.features) f.X = apply(C, f.X);
     if (this.kf) this.kf.pose = compose(C, this.kf.pose);
   }
@@ -345,7 +390,7 @@ export class StereoVO {
     this.features.forEach((f, i) => { features[2 * i] = f.u; features[2 * i + 1] = f.v; });
     return {
       status: this.status, pose: this.pose, inliers, rmse, shiftPx, keyframe, features,
-      image: L, timings: { ...timings, total: now() - t0 }, stats: this.stats, depthInfo: this.depthInfo ?? null, needDepth: !!this.needDepth,
+      image: L, timings: { ...timings, total: now() - t0 }, stats: this.stats, compass: this.heading ?? null, depthInfo: this.depthInfo ?? null, needDepth: !!this.needDepth,
     };
   }
 }

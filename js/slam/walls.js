@@ -73,6 +73,55 @@ export function extractWalls(voxels, {
   return walls;
 }
 
+/**
+ * Buildings are mostly square: walls meet at 90° or run in line (180°). Finds the building's main
+ * direction (from the walls, longest counting most; `axis` from last time keeps it steady) and
+ * turns each wall within `tolDeg` of square to be exactly square, about its middle; then joins
+ * walls that end up in line and touching. Returns { walls, axis }.
+ */
+export function squareUp(walls, axis = null, { tolDeg = 20, join = 0.3 } = {}) {
+  if (!walls.length) return { walls, axis };
+  const quarter = (a) => a - (Math.PI / 2) * Math.round(a / (Math.PI / 2)); // into ±45°
+  let sx = 0, sy = 0, total = 0;
+  for (const w of walls) {
+    const a = Math.atan2(w.z1 - w.z0, w.x1 - w.x0), L = Math.hypot(w.x1 - w.x0, w.z1 - w.z0);
+    sx += L * Math.cos(4 * a); sy += L * Math.sin(4 * a); total += L;
+  }
+  const seen = Math.atan2(sy, sx) / 4;
+  // Settle slowly once there's a direction, so the walls don't swing as new ones come in.
+  axis = axis == null ? seen : axis + quarter(seen - axis) * Math.min(1, total / 40);
+  const tol = (tolDeg * Math.PI) / 180;
+  let out = walls.map((w) => {
+    const a = Math.atan2(w.z1 - w.z0, w.x1 - w.x0), d = quarter(a - axis);
+    if (Math.abs(d) > tol) return w;
+    const b = a - d, L = Math.hypot(w.x1 - w.x0, w.z1 - w.z0) / 2, mx = (w.x0 + w.x1) / 2, mz = (w.z0 + w.z1) / 2;
+    return { ...w, x0: mx - Math.cos(b) * L, z0: mz - Math.sin(b) * L, x1: mx + Math.cos(b) * L, z1: mz + Math.sin(b) * L, square: true };
+  });
+  // Join square walls lying along the same line with less than `join` between them.
+  for (let merged = true; merged;) {
+    merged = false;
+    for (let i = 0; i < out.length && !merged; i++) {
+      for (let j = i + 1; j < out.length && !merged; j++) {
+        const A = out[i], B = out[j];
+        if (!A.square || !B.square) continue;
+        const ax = A.x1 - A.x0, az = A.z1 - A.z0, La = Math.hypot(ax, az), ux = ax / La, uz = az / La;
+        if (Math.abs(ux * (B.z1 - B.z0) - uz * (B.x1 - B.x0)) > 1e-6 * La) continue; // not parallel
+        const off = (p, q) => (p - A.x0) * -uz + (q - A.z0) * ux;
+        if (Math.abs(off(B.x0, B.z0)) > 0.12) continue;
+        const along = (p, q) => (p - A.x0) * ux + (q - A.z0) * uz;
+        const t = [along(B.x0, B.z0), along(B.x1, B.z1)].sort((p, q) => p - q);
+        if (t[0] > La + join || t[1] < -join) continue;
+        const t0 = Math.min(0, t[0]), t1 = Math.max(La, t[1]), n = A.n + B.n, o = (off(B.x0, B.z0) * B.n) / n;
+        const bx = A.x0 - uz * o, bz = A.z0 + ux * o;
+        out[i] = { ...A, x0: bx + ux * t0, z0: bz + uz * t0, x1: bx + ux * t1, z1: bz + uz * t1, n, top: Math.max(A.top, B.top) };
+        out.splice(j, 1);
+        merged = true;
+      }
+    }
+  }
+  return { walls: out, axis };
+}
+
 /** Whether segment b is just the far side of wall a (parallel, alongside it, and overlapping). */
 function sameWall(a, b) {
   const ax = a.x1 - a.x0, az = a.z1 - a.z0, La = Math.hypot(ax, az);

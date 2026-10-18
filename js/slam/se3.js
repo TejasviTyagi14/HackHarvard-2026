@@ -112,9 +112,11 @@ export function solve(A, b, n) {
 /**
  * Refines T_cw (world → camera) so the world points X (flat xyz array) project onto their image
  * positions uv (flat array), with Huber weighting so a few bad tracks can't drag it away.
- * intr: { f, cx, cy }. Returns { pose, err (per-point reprojection error, px), rmse }.
+ * intr: { f, cx, cy }. fixR: keep the rotation, solve only where the camera is. extra(R, t): more
+ * evidence about the pose, as { H (6×6), g (6) } for the same update (e.g. the visual compass).
+ * Returns { pose, err (per-point reprojection error, px), rmse }.
  */
-export function refinePose(pose, X, uv, intr, { iters = 12, huber = 1.5 } = {}) {
+export function refinePose(pose, X, uv, intr, { iters = 12, huber = 1.5, fixR = false, extra = null } = {}) {
   const n = uv.length / 2;
   const { f, cx, cy } = intr;
   let R = pose.R.slice(), t = pose.t.slice();
@@ -144,8 +146,20 @@ export function refinePose(pose, X, uv, intr, { iters = 12, huber = 1.5 } = {}) 
       }
       used++;
     }
-    if (used < 6) break;
+    if (used < (fixR ? 3 : 6)) break;
+    if (extra) {
+      const more = extra(R, t);
+      if (more) for (let a = 0; a < 6; a++) { g[a] += more.g[a]; for (let b = a; b < 6; b++) H[a * 6 + b] += more.H[a * 6 + b]; }
+    }
     for (let a = 0; a < 6; a++) for (let b = 0; b < a; b++) H[a * 6 + b] = H[b * 6 + a];
+    if (fixR) {
+      const Ht = [3, 4, 5].flatMap((a) => [3, 4, 5].map((b) => H[a * 6 + b]));
+      const dt = solve(Ht, [-g[3], -g[4], -g[5]], 3);
+      if (!dt) break;
+      t = [t[0] + dt[0], t[1] + dt[1], t[2] + dt[2]];
+      if (Math.hypot(...dt) < 1e-6) break;
+      continue;
+    }
     const d = solve(H, g.map((v) => -v), 6);
     if (!d) break;
     const dR = expSO3([d[0], d[1], d[2]]);
