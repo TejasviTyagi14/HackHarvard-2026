@@ -6,7 +6,8 @@ Context for a new Claude session picking this project up. Last updated 2026-10-1
 
 A local, no-build web app (plain ES modules, three.js and TF.js from CDNs) for two webcams:
 
-- **`index.html` — Measure page.** Live views from both cameras, COCO-SSD object boxes, distance and clock direction per object ("chair · ~2.1 m · 11 o'clock"), object-to-object distances, voice Q&A ("what's in front of me?"), and calibration (tape measure or a person standing about 2 m away).
+- **`index.html` — Landing page.** A prerecorded 3D flythrough of the demo building being mapped (`js/site/hero.js`, data from `tools/record-tour.mjs` in `data/`), then a scroll down into a radar HUD for the two-camera rig with live sliders, the depth formula and the voice agent (`js/site/radar.js`; demo data only in `js/site/adapter.js`). Shell: `js/site/main.js`, `css/site.css`, `css/radar.css`.
+- **`measure.html` — Measure page** (was `index.html`). Live views from both cameras, COCO-SSD object boxes, distance and clock direction per object ("chair · ~2.1 m · 11 o'clock"), object-to-object distances, voice Q&A ("what's in front of me?"), and calibration (tape measure or a person standing about 2 m away).
 - **`map.html` — Map a building.** Walk around and it builds a live 3D model: point cloud, a floor plan with free and blocked cells, sized furniture models, people, walls, routes with spoken turn-by-turn directions, saved places, loop closure, and save/load/PLY export. It works with **two cameras** (stereo depth) or **one camera** (depth from the Metric3D v2 model on WebGPU, a 150 MB download the first time).
 
 ## Run it

@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stereo Distance</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='9' cy='16' r='6' fill='%2338bdf8'/%3E%3Ccircle cx='23' cy='16' r='6' fill='%23fb923c'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"><i></i><i></i></span>
+      <h1>Stereo Distance</h1>
+    </div>
+    <nav class="pages" aria-label="Pages">
+      <a href="index.html">Home</a>
+      <a href="measure.html" aria-current="page">Measure</a>
+      <a href="map.html">Map a building</a>
+    </nav>
+    <div class="seg" id="sourceSeg" role="group" aria-label="Video source">
+      <button type="button" data-mode="cameras">Cameras</button>
+      <button type="button" data-mode="files">Recording</button>
+      <button type="button" data-mode="demo">Demo room</button>
+    </div>
+    <div class="chips" aria-live="polite">
+      <span class="chip" id="chipCams">No video</span>
+      <span class="chip" id="chipModel">Detector idle</span>
+      <span class="chip" id="chipFps">— fps</span>
+    </div>
+    <div class="actions">
+      <button type="button" class="btn" id="btnPause" title="Pause (space)">Pause</button>
+      <button type="button" class="btn toggle" id="btnSpeak" aria-pressed="false" title="Say the nearest objects every 2 s when something changes">Speak</button>
+      <button type="button" class="btn toggle" id="btnDebug" aria-pressed="false" title="Show match points, scores and timings">Debug</button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner" role="status" hidden>
+    <span id="bannerText"></span>
+    <button type="button" class="btn small" id="bannerAction" hidden></button>
+    <button type="button" class="banner-close" id="bannerClose" aria-label="Dismiss">×</button>
+  </div>
+
+  <main class="app">
+    <div class="stage">
+      <section class="views" aria-label="Camera views">
+        <figure class="view" data-side="0">
+          <figcaption>
+            <span class="side-tag left">Left</span>
+            <select id="devL" aria-label="Left camera"></select>
+            <span class="res" id="resL"></span>
+          </figcaption>
+          <div class="canvas-wrap">
+            <canvas id="viewL"></canvas>
+            <div class="placeholder" id="phL">
+              <div id="phIntro">
+                <p class="ph-title">Two webcams in, distances out</p>
+                <p class="ph-sub">Start with your two IC780s, replay a recording, or try the demo room.</p>
+                <div class="ph-actions">
+                  <button type="button" class="btn primary" data-start="cameras">Start cameras</button>
+                  <button type="button" class="btn" data-start="files">Open recording…</button>
+                  <button type="button" class="btn" data-start="demo">Demo room</button>
+                </div>
+              </div>
+              <p class="ph-sub" id="phStatus" hidden></p>
+            </div>
+          </div>
+        </figure>
+        <button type="button" class="swap" id="btnSwap" title="Swap left and right" aria-label="Swap left and right cameras">⇄</button>
+        <figure class="view" data-side="1">
+          <figcaption>
+            <span class="side-tag right">Right</span>
+            <select id="devR" aria-label="Right camera"></select>
+            <span class="res" id="resR"></span>
+          </figcaption>
+          <div class="canvas-wrap">
+            <canvas id="viewR"></canvas>
+            <div class="placeholder" id="phR"><p class="ph-sub">Right camera</p></div>
+          </div>
+        </figure>
+      </section>
+      <p class="hint" id="hint">Click a box to see how far it is from everything else. Click anywhere else in the <b>left</b> view (or shift-click a box) to measure that exact spot.</p>
+
+      <section class="card phone-panel" id="phonePanel" aria-label="Talk by phone with Photon">
+        <div class="card-head"><h2>Talk by phone</h2><span class="chip">Photon 2.0 · Retell</span></div>
+        <p>Use your phone for the conversation while this page watches the cameras. Keep this page open during the call.</p>
+        <div class="phone-controls">
+          <button id="btnIncoming" class="btn primary" type="button" disabled>Connect incoming call</button>
+          <a id="agentNumber" class="btn" hidden></a>
+        </div>
+        <p id="phoneCode" class="phone-code" hidden></p>
+        <form id="phoneForm" class="phone-form">
+          <label for="phoneNumber">Or get a callback on your phone</label>
+          <div class="phone-controls">
+            <input id="phoneNumber" type="tel" autocomplete="tel" placeholder="+1 617 555 0123" required maxlength="30" aria-describedby="phoneStatus">
+            <button id="btnCall" class="btn" type="submit" disabled>Call my phone</button>
+            <button id="btnHangup" class="btn" type="button" hidden>End call</button>
+          </div>
+        </form>
+        <p id="phoneStatus" class="help" role="status">Checking phone connection…</p>
+        <p class="help">Your Photon SMS number carries the call. Retell handles phone audio and speaks with an AI voice. Camera images stay on this device.</p>
+      </section>
+
+      <section class="card talk" aria-label="Ask about what the cameras see">
+        <div class="talk-left">
+          <button type="button" class="mic" id="btnMic" data-state="idle" aria-label="Ask a question" title="Ask a question (A)">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z"/></svg>
+          </button>
+          <div class="talk-main">
+            <div class="talk-status" id="talkStatus" aria-live="polite"></div>
+            <form class="ask-form" id="askForm" autocomplete="off">
+              <input id="askInput" type="text" placeholder="…or type a question" aria-label="Type a question">
+              <button type="submit" class="btn small">Ask</button>
+            </form>
+            <div class="suggestions" id="suggestions" aria-label="Example questions">
+              <button type="button" class="suggest" data-ask="What's in front of me?">What's in front of me?</button>
+              <button type="button" class="suggest" data-ask="What's closest?">What's closest?</button>
+              <button type="button" class="suggest" data-ask="What's on my left?">What's on my left?</button>
+              <button type="button" class="suggest" data-ask="Is the path clear?">Is the path clear?</button>
+              <button type="button" class="suggest" data-ask="What can I ask?">What can I ask?</button>
+            </div>
+            <div class="talk-opts">
+              <label class="check"><input type="checkbox" id="inFollowUp"> Keep listening for follow-ups</label>
+              <label class="check"><input type="checkbox" id="inSpeakAnswers"> Speak answers</label>
+            </div>
+            <p class="help" id="talkNote"></p>
+          </div>
+        </div>
+        <ol class="talk-log" id="talkLog" aria-live="polite" aria-label="Conversation"></ol>
+      </section>
+
+      <section class="lower">
+        <div class="card map-card">
+          <div class="card-head">
+            <h2>Top-down map</h2>
+            <span class="muted small" id="mapNote">Rig at the bottom, forward is up</span>
+          </div>
+          <canvas id="map"></canvas>
+        </div>
+        <div class="card list-card">
+          <div class="card-head">
+            <h2>Objects</h2>
+            <span class="muted small" id="objCount"></span>
+          </div>
+          <div class="table-wrap">
+            <table class="objects">
+              <thead>
+                <tr>
+                  <th>Object</th><th>Distance</th><th>Direction</th><th>Seen by</th>
+                  <th class="dbg">Match</th><th class="dbg">±</th><th class="truth">True</th>
+                </tr>
+              </thead>
+              <tbody id="objRows"></tbody>
+            </table>
+          </div>
+          <div class="sub-head">
+            <h3>Distances between objects</h3>
+            <span class="muted small" id="pairNote"></span>
+          </div>
+          <ul class="pairs" id="pairList"></ul>
+          <div class="sub-head">
+            <h3>Measured points</h3>
+            <button type="button" class="link" id="btnClearPins">Clear</button>
+          </div>
+          <ul class="pins" id="pinList"></ul>
+        </div>
+      </section>
+    </div>
+
+    <aside class="side" aria-label="Settings">
+      <details class="card" id="cardSetup" open>
+        <summary>Setup checklist</summary>
+        <ul class="checklist" id="checklist"></ul>
+      </details>
+
+      <details class="card" open>
+        <summary>Rig</summary>
+        <canvas id="rigDiagram" class="rig-diagram"></canvas>
+        <div class="field">
+          <label for="inBaseline">Distance between the cameras</label>
+          <div class="input-unit"><input id="inBaseline" type="number" step="0.1" min="1" max="200" inputmode="decimal"><span>cm</span></div>
+          <p class="help">Lens centre to lens centre. Measure it with a ruler; everything scales with it.</p>
+        </div>
+        <div class="field">
+          <label for="inAngle">Angle between the cameras</label>
+          <div class="input-unit"><input id="inAngle" type="number" step="0.1" min="-45" max="45" inputmode="decimal"><span>°</span></div>
+          <p class="help">0 = both point straight ahead. Positive = turned toward each other, negative = turned apart.</p>
+        </div>
+        <div class="field">
+          <label for="inSplit">Which camera is turned</label>
+          <select id="inSplit">
+            <option value="even">Both, by half the angle each</option>
+            <option value="left-straight">Only the right one</option>
+            <option value="right-straight">Only the left one</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="inFov">Horizontal field of view</label>
+          <div class="input-unit"><input id="inFov" type="number" step="0.1" min="20" max="160" inputmode="decimal"><span>°</span></div>
+          <p class="help">70° is a guess for the IC780. Calibration measures it.</p>
+        </div>
+        <p class="note" id="angleNote"></p>
+        <details class="adv">
+          <summary>More</summary>
+          <div class="field">
+            <label for="inTilt">Rig tilted down by</label>
+            <div class="input-unit"><input id="inTilt" type="number" step="1" min="-60" max="60"><span>°</span></div>
+            <p class="help">Only levels the map and directions; distances don't depend on it.</p>
+          </div>
+          <div class="field">
+            <label for="inVtol">Vertical search</label>
+            <div class="input-unit"><input id="inVtol" type="number" step="1" min="0" max="15"><span>± px</span></div>
+            <p class="help">How far above or below the expected row to look for a match. Raise it if the cameras aren't level with each other.</p>
+          </div>
+        </details>
+      </details>
+
+      <details class="card" id="cardPersonCal" open>
+        <summary>Calibrate with a person</summary>
+        <p class="help first">Works out the angle between the cameras, and with a second distance the spacing too, from someone standing in front of them. No clicking. You can also just say “calibrate”.</p>
+        <ol class="steps">
+          <li>
+            Have someone stand <b>straight ahead</b>, facing the cameras, about 2 m away. Measure along the floor to where they stand.
+            <div class="row">
+              <div class="input-unit"><input id="inPcDist1" type="number" step="0.05" min="0.5" max="15" value="2.00" inputmode="decimal" aria-label="First distance"><span class="pcUnit">m</span></div>
+              <button type="button" class="btn small primary" id="btnPc1">Capture</button>
+            </div>
+            <div class="pc-status" id="pcStatus1" aria-live="polite"></div>
+          </li>
+          <li>
+            <b>Optional, to also solve the spacing:</b> have them step back to a second measured distance, about twice as far.
+            <div class="row">
+              <div class="input-unit"><input id="inPcDist2" type="number" step="0.05" min="0.5" max="15" value="4.00" inputmode="decimal" aria-label="Second distance"><span class="pcUnit">m</span></div>
+              <button type="button" class="btn small" id="btnPc2" disabled>Capture</button>
+            </div>
+            <div class="pc-status" id="pcStatus2" aria-live="polite"></div>
+          </li>
+        </ol>
+        <div class="calib-result" id="pcResult" hidden></div>
+        <p class="help">Why two distances for the spacing: at a single distance, a wider spacing and a bigger angle look exactly the same, so one capture can only pin down one of them. It keeps your measured spacing and solves the angle, which is the hard one to measure.</p>
+      </details>
+
+      <details class="card" id="cardCalib">
+        <summary>Calibrate with a tape measure</summary>
+        <ol class="steps">
+          <li>Put something with texture (a book, a box, a patterned shirt) <b>straight ahead</b>. Measure from the middle of the bar. Start at about 1 m.</li>
+          <li><button type="button" class="btn small" id="btnPickTarget">Pick target</button> then click it in the <b>left</b> view. The app finds it on the right; if that's wrong, click the right spot in the right view.</li>
+          <li>
+            <label for="inTrueDist">Distance you measured</label>
+            <div class="row">
+              <div class="input-unit"><input id="inTrueDist" type="number" step="0.01" min="0.2" max="30" value="1.00" inputmode="decimal"><span id="trueUnit">m</span></div>
+              <button type="button" class="btn small" id="btnAddSample" disabled>Add sample</button>
+            </div>
+          </li>
+          <li>Repeat at about 2 m, then <button type="button" class="btn small primary" id="btnSolve" disabled>Solve</button></li>
+        </ol>
+        <div class="calib-target" id="calibTarget"></div>
+        <ul class="samples" id="sampleList"></ul>
+        <div class="calib-result" id="calibResult" hidden></div>
+      </details>
+
+      <details class="card" id="cardCheck">
+        <summary>Camera check</summary>
+        <div id="camInfo" class="cam-info"></div>
+        <button type="button" class="btn small" id="btnFocusTest">Run 10-second focus check</button>
+        <p class="help">Point the rig at a still scene and keep everything still. If a camera keeps refocusing, distances will jitter.</p>
+        <div id="focusResult" class="result-box" hidden></div>
+        <div class="kv">
+          <span>Vertical offset between cameras</span>
+          <span><b id="vOffset">0.0 px</b> <button type="button" class="link" id="btnResetVOff">reset</button></span>
+        </div>
+        <p class="help">Learned from confident matches; a few pixels is normal. Over ~10 px means one camera is tilted.</p>
+      </details>
+
+      <details class="card" id="cardDisplay">
+        <summary>Detection &amp; display</summary>
+        <label class="check"><input type="checkbox" id="inDetect"> Detect objects</label>
+        <div class="field">
+          <label for="inModel">Detector</label>
+          <select id="inModel"></select>
+        </div>
+        <div class="field">
+          <label for="inMinScore">Minimum confidence <b id="minScoreVal"></b></label>
+          <input id="inMinScore" type="range" min="0.2" max="0.9" step="0.05">
+        </div>
+        <div class="field">
+          <label for="inRes">Camera resolution</label>
+          <select id="inRes">
+            <option value="640x480">640 × 480</option>
+            <option value="1280x720">1280 × 720</option>
+            <option value="1920x1080">1920 × 1080</option>
+          </select>
+          <p class="help">Matching runs at 640 px wide either way. Drop to 640 × 480 if the second camera won't start (USB bandwidth).</p>
+        </div>
+        <div class="field">
+          <label for="inUnits">Units</label>
+          <select id="inUnits">
+            <option value="m">Metres</option>
+            <option value="ft">Feet</option>
+          </select>
+        </div>
+      </details>
+
+      <details class="card" id="cardRecord">
+        <summary>Record &amp; replay</summary>
+        <div class="row">
+          <button type="button" class="btn small" id="btnRecord">● Record</button>
+          <span class="muted small" id="recTime"></span>
+        </div>
+        <p class="help">Saves one side-by-side .webm (left | right) so replays stay in sync. Replay it under <b>Recording</b>.</p>
+        <div class="row">
+          <button type="button" class="btn small" id="btnOpenRec">Open recording…</button>
+        </div>
+        <p class="help">One side-by-side file, or two files (left and right, sorted by name).</p>
+        <div class="row">
+          <button type="button" class="btn small" id="btnExport">Export settings</button>
+          <button type="button" class="btn small" id="btnImport">Import settings</button>
+        </div>
+      </details>
+
+      <details class="card" id="cardDemo" hidden open>
+        <summary>Demo room</summary>
+        <p class="help">A rendered room with five boxes at known distances. Boxes come from the scene, not the detector, and the table shows the true distance next to the measured one.</p>
+        <div class="field">
+          <label for="inDemoErr">Mount the virtual cameras off by</label>
+          <div class="input-unit"><input id="inDemoErr" type="number" step="0.1" min="-10" max="10"><span>°</span></div>
+          <p class="help">Simulates a rig whose real angle differs from what you entered, so you can practise calibrating.</p>
+        </div>
+        <div class="field">
+          <label for="inDemoBaseErr">…and their spacing off by</label>
+          <div class="input-unit"><input id="inDemoBaseErr" type="number" step="0.1" min="-10" max="10"><span>cm</span></div>
+          <p class="help">For the person calibration, a stand-in person appears at each distance you capture.</p>
+        </div>
+        <button type="button" class="btn small" id="btnRebuildDemo">Rebuild demo</button>
+      </details>
+    </aside>
+  </main>
+
+  <input type="file" id="fileInput" accept="video/*" multiple hidden>
+  <input type="file" id="importInput" accept="application/json,.json" hidden>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

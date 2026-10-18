@@ -264,7 +264,7 @@ Known limits:
 ## Files
 
 ```
-index.html, css/style.css   the page
+measure.html, css/style.css the Measure page (index.html is the landing page)
 js/app.js                   controller: sources → detect → measure → track → draw
 js/geometry.js              rig model, rays, triangulation, directions, calibration fit
 js/stereo.js                grayscale frames, NCC, epipolar and band search, sharpness
