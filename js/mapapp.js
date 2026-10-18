@@ -1,3 +1,4 @@
+import { mountPhone } from './phone.js';
 // Map page: walk around with the two cameras and a 3D model of the building builds up; mark
 // places by voice or click, then get spoken turn-by-turn directions back to them.
 //   cameras → (grayscale pairs) → worker: tracking + keyframe depth + fusion + planning
@@ -525,6 +526,15 @@ function logTalk(who, text) {
 
 function onTalkState(st, detail = '') {
   const mic = $('btnMic');
+  if (talk.phoneActive) {
+    mic.disabled = true;
+    mic.dataset.state = 'idle';
+    const note = $('talkNote');
+    if (note) note.textContent = 'Phone mode uses your phone microphone and speaker. Laptop microphone recognition is off.';
+    $('talkStatus').textContent = st === 'speaking' ? 'Answering on your phone…' : st === 'thinking' ? 'Working out your answer…' : 'Phone mode is on. Use your phone to talk.';
+    return;
+  }
+  mic.disabled = !talk.supported;
   mic.dataset.state = st;
   const s = $('talkStatus');
   if (st === 'listening') s.textContent = detail ? `“${detail}”` : 'Listening…';
@@ -904,7 +914,7 @@ function wire() {
   const onKey = (e, down) => {
     if (e.target.closest('input, select, textarea')) return;
     if (down && e.code === 'KeyM' && !e.repeat) { talk.toggle(); return; }
-    if (down && e.key === 'Escape') { talk.end(); return; }
+    if (down && e.key === 'Escape') { if (talk.phoneActive) talk.phone.hangup(); else talk.end(); return; }
     const k = keyMap[e.code];
     if (!k || state.mode !== 'demo') return;
     e.preventDefault();
@@ -920,6 +930,7 @@ async function init() {
   bindSettings();
   wire();
   onTalkState('idle');
+  mountPhone({ talk, voice });
   refreshNav();
   refreshDestinations();
   renderGrid();

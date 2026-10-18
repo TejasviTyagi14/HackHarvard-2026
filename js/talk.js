@@ -39,6 +39,7 @@ export class Talk {
 
   /** The mic button: start listening, finish early, or cut into an answer and listen. */
   toggle() {
+    if (this.phoneActive) return;
     if (this.state === 'listening') return this.listener.stop();
     return this.listen();
   }
@@ -48,11 +49,12 @@ export class Talk {
     this.session++;
     this.listener.abort();
     this.voice.cancel();
-    if (this.state !== 'idle') tone('stop');
+    if (!this.phoneActive && this.state !== 'idle') tone('stop');
     this.set('idle');
   }
 
   async listen() {
+    if (this.phoneActive) return;
     if (!this.supported) return this.set('idle', 'unsupported');
     const session = ++this.session;
     this.voice.cancel();
@@ -81,6 +83,23 @@ export class Talk {
     return this.respond([text], { spoken: false, session });
   }
 
+  /** Retell handles listening and speaking. Return the exact app answer for its current turn. */
+  answerPhone(text) {
+    this.session++;
+    this.listener.abort();
+    this.set('thinking');
+    const result = this.answer([text], this.getScene(), this.ctx);
+    this.ctx = result.ctx;
+    this.onTurn(result);
+    // Send the answer before actions enqueue any calibration or navigation announcements.
+    if (result.action && !result.action.end) {
+      const connection = this.phone;
+      setTimeout(() => { if (this.phoneActive && this.phone === connection) this.onAction(result.action); }, 0);
+    }
+    this.set('idle');
+    return result;
+  }
+
   async respond(alternatives, { spoken, session }) {
     this.set('thinking');
     const result = this.answer(alternatives, this.getScene(), this.ctx);
@@ -92,6 +111,8 @@ export class Talk {
       await this.voice.say(result.text);
       if (session !== this.session) return;
     }
+    if (session !== this.session) return;
+    if (this.phoneActive && result.action?.end) this.phone?.hangup();
     if (spoken && this.followUp && !result.action?.end) return this.listen();
     this.set('idle', result.action?.end ? 'ended' : '');
   }

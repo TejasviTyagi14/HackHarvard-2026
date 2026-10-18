@@ -1,0 +1,353 @@
+https://github.com/TejasviTyagi14/HackHarvard-2026
+Trying to get photon to work with this github repo. 
+I want the user to be able to communicate through a phone call via photon ai, rather than through the laptop microphone to communicate back and forth with the product. 
+Add this feature in. 
+Firstly, run the site
+
+
+
+
+
+
+
+7:09 PM
+
+
+
+
+
+
+I’ll get the site running first, then inspect the voice flow and add Photon phone-call support.
+
+
+
+
+Ran commands
+
+
+
+Which Photon AI service are you using? Share its website or docs link so I connect the right phone-call API.
+
+
+
+
+
+Used the browser, read files, ran commands, searched the web, opened browser
+
+
+
+The site is running at http://localhost:8766. Its usual port was already occupied, so I used the next one.
+The current app handles conversation entirely in the browser. Phone calls will need a small server to connect Photon audio to the app’s live measurements and send spoken answers back.
+
+
+
+
+Used the browser, read files, ran commands, searched the web
+
+
+
+I found Photon’s published Voice SDK at photon.codes and will use that unless you meant a different Photon service. It handles calls and audio streaming, but speech recognition and speech synthesis need a separate service. I’m adding a “Call my phone” flow that keeps the existing answers, follow-up context, and camera controls.
+
+
+
+
+Loaded a tool, read files
+
+
+
+I’m using the OpenAI Docs skill to verify the speech API connection. Photon will carry the phone call; the speech service will transcribe questions and read the app’s existing answers aloud.
+
+
+
+
+Read files, ran commands, searched the web
+
+
+
+The call bridge is in place. I’m now wiring it into both the measuring page and the building map, including interruption handling and cleanup when the caller hangs up or the page closes. The camera measurements will stay in the browser.
+
+
+
+
+Used the browser, ran commands
+
+
+
+The first phone-specific checks pass: follow-up questions use fresh measurements, phone mode never opens the laptop microphone, and interruptions and hangups clean up the call.
+The site has no Photon or OpenAI credentials configured yet, so I can test the integration locally but can’t verify a real call until those are added.
+
+
+
+
+Which Photon AI service are you using? Share its website or docs link so I connect the right phone-call API.giving the agent a phone number 
+Hackathon Guidelines for Photon 2.0
+🏆 Track: Build a Messaging Agent using Photon 2.0
+A track for builders who see a future where AI coexists with us
+We’re inviting teams who believe AI isn’t a utility tool but a being that lives with us - present in our conversations, attuned to context, and trusted to act with taste. Build agents that don’t merely assist, but participate. Shape a future where human intention and machine intuition compound.
+<aside>
+ 🚀
+New: the Photon 2.0 beta goes live October 15, 2026 at [photon.co/beta](https://photon.co/beta), and it’s free to use. Give your agent a phone number and a native presence everywhere people already talk: iMessage, SMS, RCS, WhatsApp, Telegram, email, and phone calls. Be among the first teams to build on it.
+</aside>
+What you can build
+- Agents that join human-to-human conversations naturally to suggest, support, or participate
+- AI companions that understand social context, emotion, and tone
+- Multi-agent systems that collaborate with humans and each other toward shared goals
+- Agents that talk: voice agents on a Photon phone number that answer and place real calls, then keep the conversation going over text
+- Tools that let agents seamlessly exist across interfaces, from iMessage and SMS to WhatsApp, Telegram, email, and phone calls
+<aside>
+ ☝
+[Examples](https://app.notion.com/Examples-a28e443f36bb828794ed0147e04d40a9?pvs=21)
+</aside>
+Requirements
+Build on the Photon 2.0 beta and ship where people already live:
+- [Photon 2.0 beta](https://photon.co/beta) - Photon’s open source framework that brings agents to every messaging channel. Sign up at the [dashboard](https://app.photon.codes/dashboard), create a project, and add the channels you want. No promo code needed: the beta is free to use.
+- Texting: connect your agent to iMessage through the dashboard, and add SMS, RCS, WhatsApp, Telegram, or email if you want more reach. iMessage is still the flagship channel for text agents.
+- Voice: phone calls run on an SMS number, not on iMessage. Add an SMS number to your project, set up a Voice profile, and connect it over SIP to Retell, ElevenLabs, LiveKit, or Twilio. Calls and group chat on iMessage both need a dedicated iMessage line, so for the hackathon, build voice on SMS.
+- Docs: [Photon 2.0 beta docs](https://photon.codes/docs/beta/api-reference) (still being written) and [cookbooks](https://photon.codes/docs/beta/cookbooks) with step-by-step voice setup for [Retell](https://photon.codes/docs/beta/cookbooks/voice/retell), [ElevenLabs](https://photon.codes/docs/beta/cookbooks/voice/elevenlabs), [LiveKit](https://photon.codes/docs/beta/cookbooks/voice/livekit), and [Twilio](https://photon.codes/docs/beta/cookbooks/voice/twilio). SDK reference: [https://photon.codes/docs/spectrum-ts/introduction](https://photon.codes/docs/spectrum-ts/introduction)
+To qualify for the prize, your project must be built on Photon 2.0 and live on at least one Photon channel. iMessage is home base for text agents; voice agents live on an SMS number.
+Prize
+🥇 iMessage Track Winner ($700)
+- 💵 $400 Cash
+- ⚡ $300 Photon Credits
+- 🚀 Fast-track to the final interview round with the Photon team
+🥈 iMessage Runner-Up ($300)
+- 💵 $200 Cash
+- ⚡ $100 Photon Credits
+🎙️ Best Voice Agent ($400)
+- 💵 $300 Cash
+- ⚡ $100 Photon Credits
+- A separate, standalone prize for the team that ships the best voice agent on a Photon number: real phone calls in and out, built on Photon 2.0’s voice channel (SMS)
+(All prizes are awarded per team.)
+What great looks like
+- Real human-in-the-loop collaboration, not a demo reel of prompts
+- Context-awareness that persists across time, channels, and teammates
+- A delightful default: the agent elevates the moment without demanding attention
+- Thoughtful safety and fallback behaviors that earn trust
+- For voice agents: natural turn-taking, low latency, and an agent that remembers the call when the conversation moves back to text
+Judging
+- Vision: Does this push the frontier of hybrid intelligence?
+- Craft: Is it cohesive, responsive, and tastefully integrated?
+- Depth: How well does it handle real-world context and edge cases?
+- Traction: Can we imagine this running with real users tomorrow?
+Join the community
+Questions, feedback, or looking for a teammate?
+Join our Discord for Q&A and updates: [Join the Photon Discord Server!](https://discord.gg/KhCRKNsx55)
+Follow us on X: [https://x.com/photonhq](https://x.com/photonhq)
+Photon brand kit: [https://photon.codes/brand](https://photon.codes/brand)
+
+
+
+
+
+
+
+
+7:17 PM
+
+
+
+
+
+
+That clarifies the required integration: Photon 2.0 uses an SMS number with a Voice profile connected over SIP to a voice provider. I’ll switch to that supported beta setup and add a number users can call. The site is still running while I update the connection.
+
+
+
+
+Ran a command, searched the web
+
+
+
+Do you already have a voice provider connected to your Photon 2.0 SMS number? I’m using Retell because it can send each phone question directly to your app’s existing answer logic.
+
+
+
+
+
+Ran a command, searched the web
+
+
+
+Do you already have a voice provider connected to your Photon 2.0 SMS number? I’m using Retell because it can send each phone question directly to your app’s existing answer logic.Use Retell
+
+
+
+
+
+
+
+
+
+7:18 PM
+
+
+
+
+
+
+Ran command
+
+
+
+
+Retell is confirmed. I’m making the Photon number work both ways: users can call the agent, or request a callback from the site. Incoming callers will enter a short pairing code shown on the camera page, so each call connects to the right live session.
+
+
+
+
+Ran commands
+
+
+
+The Photon 2.0/Retell path is now implemented, including incoming-call pairing and callbacks. I’m checking it against Retell’s documented message format and testing wrong codes, duplicate questions, disconnected camera pages, and hangups before the phone answers.
+
+
+
+
+Used the browser, ran commands
+Ran command
+
+
+
+
+Started background terminal
+
+
+
+
+Ran command
+
+
+
+
+Verify Photon 2.0 controls on the site
+
+
+
+
+
+Check existing camera demo and conversation
+
+
+
+
+
+Verify answers and check for browser errors
+
+
+
+
+
+Ran command
+
+
+
+
+Ran command
+
+
+
+
+Started background terminal
+
+
+
+
+
+
+
+
+
+Worked for 17m 25s
+
+
+
+All 86 tests passed. I’m doing the final browser check with a simulated Retell connection to verify the visible call controls and live answers. Real calls still need your Photon SMS number, Retell account settings, and a public connection to this server.
+
+
+
+
+Used the browser
+
+
+
+
+You've hit your usage limit. Upgrade your plan or add credits to continue, or try again later.
+
+
+
+
+
+
+
+
+
+
+give me a breakdown of where the task ended. dont continue, just quick rundown of everything you did so far
+
+
+
+
+
+
+
+3:47 AM
+
+
+
+
+
+
+Worked for 17s
+
+
+
+
+
+
+The feature is implemented locally, but real phone calls aren’t connected yet.
+- Cloned your GitHub repo and started the site at localhost:8766.
+- Switched to the correct Photon 2.0 SMS number → SIP → Retell integration after you shared the hackathon guidelines.
+- Added phone controls to both pages: incoming calls with a pairing code, callbacks, and End call.
+- Connected phone questions to the existing live camera answers, follow-ups, calibration, and navigation. Phone mode disables laptop microphone recognition.
+- Added setup instructions, environment configuration, and connection/error handling.
+- 86 tests passed. A simulated Retell call also worked through the browser, including follow-up answers and hangup.
+Where it stopped: your Photon number, Retell credentials/agent, SIP setup, and public server connection still need configuring. No real call was tested, and nothing was committed or pushed to GitHub.
+I’ve stopped work as requested.
+
+Web previewWebsiteOpenOpen in
+
+
+
+
+
+
+3:47 AM
+
+
+
+
+
+
+
+push to the github
+
+
+
+
+
+
+
+3:48 AM
+
+
+
+
+
+
+Worked for 2m 25s
+
+
+
+Pushed to main: commit 48b5220.
+All 86 tests passed. Real calls still require the Photon/Retell setup in the included guide.
