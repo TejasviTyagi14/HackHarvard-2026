@@ -318,7 +318,7 @@ export async function mountHero(container, { onProgress, motion } = {}) {
   const ro = new ResizeObserver(resize);
 
   // ---------- state ----------
-  let tourT = reduced ? duration + 10 : 0, wall = 0, fadeT = -1, scrollP = 0, paused = false, mode = 'tour', raf = 0, last = 0, dirty = true, controls = null;
+  let tourT = reduced ? duration + 10 : 0, wall = 0, fadeT = -1, scrollP = 0, scrollS = 0, paused = false, mode = 'tour', raf = 0, last = 0, dirty = true, controls = null;
   const rigPos = new THREE.Vector3(), rigQ = new THREE.Quaternion(), fwd = new THREE.Vector3(), vel = new THREE.Vector3(), velS = new THREE.Vector3();
   const pA = new THREE.Vector3(), pB = new THREE.Vector3(), camPos = new THREE.Vector3(), look = new THREE.Vector3();
   const want = new THREE.Vector3(), wantLook = new THREE.Vector3(), top = new THREE.Vector3(), topLook = new THREE.Vector3(), tmp = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
@@ -378,7 +378,7 @@ export async function mountHero(container, { onProgress, motion } = {}) {
     return false;
   }
   function updateLabels(t) {
-    const fade = 1 - Math.min(1, scrollP * 1.6);
+    const fade = 1 - Math.min(1, scrollS * 1.6);
     let shown = 0;
     for (const s of solids) {
       if (!s.label) continue;
@@ -433,6 +433,10 @@ export async function mountHero(container, { onProgress, motion } = {}) {
         if (fadeT >= 2 * FADE) fadeT = -1;
       }
     }
+    // Follow the page's scroll with a little damping, so wheel steps glide instead of jumping.
+    scrollS += (scrollP - scrollS) * (1 - Math.exp(-dt * 9));
+    if (Math.abs(scrollP - scrollS) < 1e-4) scrollS = scrollP;
+    else dirty = true;
     const t = Math.min(tourT, duration);
     updateRig(t);
     pUniforms.uTime.value = reduced ? 1e4 : tourT;
@@ -448,7 +452,7 @@ export async function mountHero(container, { onProgress, motion } = {}) {
         const k = 1 - Math.exp(-dt * 2.2);
         camPos.lerp(want, k); look.lerp(wantLook, 1 - Math.exp(-dt * 3));
       }
-      const e = scrollP * scrollP * (3 - 2 * scrollP);
+      const e = scrollS * scrollS * (3 - 2 * scrollS);
       top.set(rigPos.x, 9.5, rigPos.z + 1.6); topLook.set(rigPos.x, 0, rigPos.z - 0.3);
       camera.position.lerpVectors(camPos, top, e);
       tmp.lerpVectors(look, topLook, e);
@@ -457,13 +461,13 @@ export async function mountHero(container, { onProgress, motion } = {}) {
       moveKeys(dt);
       controls.update(dt);
     }
-    const dim = 1 - 0.4 * scrollP;
+    const dim = 1 - 0.4 * scrollS;
     pUniforms.uDim.value = dim; gUniforms.uDim.value = dim;
     const loopFade = fadeT < 0 ? 0 : fadeT < FADE ? fadeT / FADE : Math.max(0, 2 - fadeT / FADE);
-    fadeEl.style.opacity = Math.max(loopFade, scrollP * 0.35).toFixed(3);
+    fadeEl.style.opacity = Math.max(loopFade, scrollS * 0.35).toFixed(3);
     updateLabels(t);
     if (composer) composer.render(); else renderer.render(scene, camera);
-    dirty = false;
+    if (Math.abs(scrollP - scrollS) < 1e-4) dirty = false;
   }
 
   // ---------- input ----------

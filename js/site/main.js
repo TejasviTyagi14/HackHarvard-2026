@@ -3,7 +3,9 @@
 // down onto the radar. GSAP ScrollTrigger + Lenis when they loaded; a plain scroll listener if not.
 
 const $ = (id) => document.getElementById(id);
-const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+// The tour always plays here (the system's reduce-motion setting would freeze it into a still
+// overview); add ?still to the address for the still version.
+const reduced = new URLSearchParams(location.search).has('still');
 
 let hero = null, radar = null, lenis = null, inControl = false;
 
@@ -23,7 +25,7 @@ async function startHero() {
   const cap = setTimeout(doneLoading, 6000);
   try {
     const { mountHero } = await import('./hero.js');
-    hero = await mountHero($('stage'), { onProgress: (f) => progress(0.1 + 0.9 * f) });
+    hero = await mountHero($('stage'), { motion: !reduced, onProgress: (f) => progress(0.1 + 0.9 * f) });
   } catch (err) {
     console.warn('3D flythrough unavailable:', err);
   }
