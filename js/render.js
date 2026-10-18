@@ -3,10 +3,10 @@
 import { DEG, cameraYaws } from './geometry.js';
 import { formatDistance, objectLabel } from './scene.js';
 
-const PALETTE = ['#38bdf8', '#fb923c', '#a3e635', '#f472b6', '#c084fc', '#facc15', '#2dd4bf', '#f87171'];
-const INK = '#0b0f17';
+const PALETTE = ['#4ade80', '#2dd4bf', '#86efac', '#34d399', '#5eead4', '#a3e635', '#67e8f9', '#6ee7b7'];
+const INK = '#03110a';
 const PIN = '#f8fafc';
-const CALIB = '#fbbf24';
+const CALIB = '#f59e0b';
 const FONT = 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif';
 
 export function classColor(cls) {
@@ -112,7 +112,7 @@ function ring(ctx, x, y, color, dpr, r = 6) {
 export function drawView(ctx, v) {
   const { side, frame, objects, pins, selectedId, debug, units, calib, dpr } = v;
   const W = ctx.canvas.width, H = ctx.canvas.height;
-  ctx.fillStyle = '#05070b';
+  ctx.fillStyle = '#05070a';
   ctx.fillRect(0, 0, W, H);
   if (v.paused && v.still) ctx.drawImage(v.still, 0, 0, W, H);
   else if (v.source?.ready) v.source.drawTo(ctx, W, H);
@@ -190,7 +190,7 @@ function drawSamples(ctx, o, side, kx, ky, dpr, selected) {
   ctx.font = `600 ${10 * dpr}px ${FONT}`;
   ctx.textBaseline = 'bottom';
   for (const s of o.samples || []) {
-    const col = s.ok ? '#34d399' : '#f87171';
+    const col = s.ok ? '#4ade80' : '#f87171';
     if (side === primary) {
       ctx.fillStyle = col;
       ctx.beginPath();
@@ -211,7 +211,7 @@ function drawSamples(ctx, o, side, kx, ky, dpr, selected) {
   // Where the first sample point could appear in the other camera (its epipolar line).
   const seg = o.samples?.[0]?.m?.seg;
   if (selected && side !== primary && seg) {
-    ctx.strokeStyle = 'rgba(250, 204, 21, 0.9)';
+    ctx.strokeStyle = 'rgba(125, 211, 252, 0.9)';
     ctx.setLineDash([5 * dpr, 4 * dpr]);
     ctx.lineWidth = 1.5 * dpr;
     ctx.beginPath();
@@ -222,7 +222,7 @@ function drawSamples(ctx, o, side, kx, ky, dpr, selected) {
   ctx.restore();
 }
 
-const MAP = { bg: '#0d1118', ring: '#1f2735', spoke: '#18202c', text: '#6b7588', fovL: 'rgba(56,189,248,0.07)', fovR: 'rgba(251,146,60,0.07)' };
+const MAP = { bg: '#04070b', ring: 'rgba(125,211,252,0.12)', spoke: 'rgba(125,211,252,0.07)', text: 'rgba(186,230,253,0.55)', fovL: 'rgba(125,211,252,0.07)', fovR: 'rgba(56,189,248,0.06)' };
 
 /** Top-down map, forward = up. m: { objects, pins, rig, settings, selectedId, units, dpr } */
 export function drawMap(ctx, m) {
@@ -284,10 +284,10 @@ export function drawMap(ctx, m) {
       ctx.closePath();
       ctx.fill();
     }
-    ctx.fillStyle = '#cbd5e1';
+    ctx.fillStyle = '#e0f2fe';
     ctx.fillRect(ox - halfB - 3 * dpr, oy - 3 * dpr, 2 * halfB + 6 * dpr, 6 * dpr);
-    ctx.fillStyle = '#38bdf8'; ctx.fillRect(ox - halfB - 3 * dpr, oy - 3 * dpr, 6 * dpr, 6 * dpr);
-    ctx.fillStyle = '#fb923c'; ctx.fillRect(ox + halfB - 3 * dpr, oy - 3 * dpr, 6 * dpr, 6 * dpr);
+    ctx.fillStyle = '#7dd3fc'; ctx.fillRect(ox - halfB - 3 * dpr, oy - 3 * dpr, 6 * dpr, 6 * dpr);
+    ctx.fillStyle = '#38bdf8'; ctx.fillRect(ox + halfB - 3 * dpr, oy - 3 * dpr, 6 * dpr, 6 * dpr);
   }
 
   const sel = objects.find((o) => o.id === selectedId && o.ground);
@@ -299,7 +299,7 @@ export function drawMap(ctx, m) {
     for (const o of placed) {
       if (o === sel || !o.point) continue;
       const [x, y] = P(o.ground.x, o.ground.z);
-      ctx.strokeStyle = 'rgba(226,232,240,0.55)';
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
       ctx.setLineDash([4 * dpr, 4 * dpr]);
       ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(x, y); ctx.stroke();
       ctx.setLineDash([]);
@@ -307,9 +307,9 @@ export function drawMap(ctx, m) {
       const text = formatDistance(d, units);
       const tw = ctx.measureText(text).width;
       const mx = (sx + x) / 2, my = (sy + y) / 2;
-      ctx.fillStyle = 'rgba(13,17,24,0.85)';
+      ctx.fillStyle = 'rgba(5,7,10,0.88)';
       ctx.fillRect(mx - tw / 2 - 4 * dpr, my - 8 * dpr, tw + 8 * dpr, 16 * dpr);
-      ctx.fillStyle = '#e2e8f0';
+      ctx.fillStyle = '#ffffff';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(text, mx, my);
@@ -328,7 +328,7 @@ export function drawMap(ctx, m) {
       ctx.fillStyle = col;
       ctx.beginPath(); ctx.arc(x, y, (o === sel ? 8 : 6) * dpr, 0, 2 * Math.PI); ctx.fill();
       ctx.strokeStyle = INK; ctx.lineWidth = 1.5 * dpr; ctx.stroke();
-      ctx.fillStyle = '#e2e8f0';
+      ctx.fillStyle = '#ffffff';
       ctx.fillText(`${o.cls} ${formatDistance(o.range, units)}`, x + 10 * dpr, y);
     } else {
       const [ex, ey] = dir(o.azimuth, R * 0.97);
@@ -350,7 +350,7 @@ export function drawMap(ctx, m) {
     ctx.beginPath();
     ctx.moveTo(x, y - 6 * dpr); ctx.lineTo(x + 6 * dpr, y); ctx.lineTo(x, y + 6 * dpr); ctx.lineTo(x - 6 * dpr, y);
     ctx.closePath(); ctx.fill();
-    ctx.fillStyle = '#e2e8f0';
+    ctx.fillStyle = '#ffffff';
     ctx.fillText(`#${p.id} ${formatDistance(p.range, units)}`, x + 9 * dpr, y);
   }
   ctx.restore();
@@ -366,7 +366,7 @@ export function drawRigDiagram(ctx, settings, dpr) {
   const hf = (settings.hfovDeg / 2) * DEG;
   ctx.save();
   ctx.font = `${11 * dpr}px ${FONT}`;
-  for (const [x, yaw, fill, stroke] of [[cx - half, yawL, 'rgba(56,189,248,0.12)', '#38bdf8'], [cx + half, yawR, 'rgba(251,146,60,0.12)', '#fb923c']]) {
+  for (const [x, yaw, fill, stroke] of [[cx - half, yawL, 'rgba(125,211,252,0.12)', '#7dd3fc'], [cx + half, yawR, 'rgba(56,189,248,0.10)', '#38bdf8']]) {
     ctx.fillStyle = fill;
     ctx.beginPath();
     ctx.moveTo(x, by);
@@ -388,14 +388,14 @@ export function drawRigDiagram(ctx, settings, dpr) {
     ctx.restore();
   }
   // Bar and spacing dimension.
-  ctx.strokeStyle = '#64748b';
+  ctx.strokeStyle = 'rgba(125,211,252,0.45)';
   ctx.lineWidth = 1 * dpr;
   ctx.beginPath();
   ctx.moveTo(cx - half, by + 12 * dpr); ctx.lineTo(cx + half, by + 12 * dpr);
   ctx.moveTo(cx - half, by + 8 * dpr); ctx.lineTo(cx - half, by + 16 * dpr);
   ctx.moveTo(cx + half, by + 8 * dpr); ctx.lineTo(cx + half, by + 16 * dpr);
   ctx.stroke();
-  ctx.fillStyle = '#cbd5e1';
+  ctx.fillStyle = '#f8fafc';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
   ctx.fillText(`${Number(settings.baselineCm).toFixed(1)} cm (not to scale)`, cx, by + 15 * dpr);
@@ -404,10 +404,10 @@ export function drawRigDiagram(ctx, settings, dpr) {
   const kind = Math.abs(a) < 0.05 ? 'parallel' : a > 0 ? 'toed in' : 'toed out';
   ctx.fillText(`${a.toFixed(1)}° between cameras · ${kind}`, cx, 4 * dpr);
   ctx.textAlign = 'left';
-  ctx.fillStyle = '#38bdf8';
+  ctx.fillStyle = '#7dd3fc';
   ctx.fillText('L', 6 * dpr, by - 6 * dpr);
   ctx.textAlign = 'right';
-  ctx.fillStyle = '#fb923c';
+  ctx.fillStyle = '#38bdf8';
   ctx.fillText('R', W - 6 * dpr, by - 6 * dpr);
   ctx.restore();
 }

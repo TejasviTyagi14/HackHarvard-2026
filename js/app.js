@@ -14,7 +14,8 @@ import { classColor, drawMap, drawRigDiagram, drawView, fitCanvas } from './rend
 import { Speaker, Voice } from './speech.js';
 import { Talk } from './talk.js';
 import { sayDistance } from './assistant.js';
-import { DEFAULT_DETAIL, DetailController, normalizeDetail } from './detail.js';
+import { DEFAULT_DETAIL, DETAIL_PRESETS, DetailController, normalizeDetail } from './detail.js';
+import { mountDroid } from './site/droid.js';
 import { fitFromPerson, personMatches, personReading, pickPerson, robustSubset, verticalOffset } from './personcal.js';
 import { StereoRecorder, downloadBlob } from './recorder.js';
 
@@ -1269,6 +1270,23 @@ function onTalkAction(action) {
   }
 }
 
+/** The Detail button beside the mic: pick Brief / Normal / Detailed and watch Droid "edit" the preset. */
+function wireDetailPopup() {
+  const button = $('btnDetail');
+  if (!button) return;
+  if (!document.querySelector('link[href="css/radar.css"]')) {
+    // The pop-up's styles live with the landing page's radar section.
+    document.head.append(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'css/radar.css' }));
+  }
+  const same = (a, b) => Object.keys(a).every((k) => a[k] === b[k]);
+  const level = Object.keys(DETAIL_PRESETS).find((k) => same(DETAIL_PRESETS[k], state.settings.detail)) ?? 'normal';
+  mountDroid({
+    button, anchor: button.closest('.card') ?? button, level,
+    reduced: matchMedia('(prefers-reduced-motion: reduce)').matches,
+    onApply: (_, detail) => setDetail(detail),
+  });
+}
+
 function setDetail(detail) {
   state.settings.detail = normalizeDetail(detail);
   speaker.nearCount = state.settings.detail.updateItems;
@@ -1359,6 +1377,7 @@ function wire() {
   $('btnSpeak').addEventListener('click', () => setUpdates(!speaker.enabled));
 
   $('btnMic').addEventListener('click', () => talk.toggle());
+  wireDetailPopup();
   $('askForm').addEventListener('submit', (e) => {
     e.preventDefault();
     const q = $('askInput').value.trim();

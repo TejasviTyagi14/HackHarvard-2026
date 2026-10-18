@@ -1,0 +1,294 @@
+/* Sensor-HUD theme for measure.html, layered on top of style.css (which map.html also uses).
+   Palette: near-black, white text, light blue for rig/UI, green for detected objects,
+   amber only for close-range alerts. html.embed = shown inside the landing page's iframe. */
+
+:root {
+  --bg: #05070a;
+  --panel: rgba(10, 17, 26, 0.62);
+  --panel-2: rgba(125, 211, 252, 0.06);
+  --line: rgba(125, 211, 252, 0.16);
+  --line-2: rgba(125, 211, 252, 0.28);
+  --text: #f5f9fc;
+  --muted: rgba(226, 240, 252, 0.62);
+  --faint: rgba(186, 214, 236, 0.42);
+  --accent: #7dd3fc;
+  --accent-ink: #03121c;
+  --left: #7dd3fc;
+  --right: #38bdf8;
+  --ok: #4ade80;
+  --obj: #4ade80;
+  --warn: #f59e0b;
+  --err: #f87171;
+  --glow: 0 0 18px rgba(125, 211, 252, 0.18);
+  --radius: 12px;
+  --font: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+html { background: var(--bg); }
+body {
+  background:
+    radial-gradient(1200px 600px at 20% -10%, rgba(125, 211, 252, 0.07), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, rgba(74, 222, 128, 0.04), transparent 60%),
+    var(--bg);
+  font-family: var(--font);
+}
+::selection { background: rgba(125, 211, 252, 0.3); }
+
+/* Embedded in the landing page: transparent, sized purely by content (never by the viewport). */
+html.embed, html.embed body { background: transparent; min-height: 0 !important; height: auto !important; }
+html.embed body { overflow: hidden; display: flow-root; }
+html.embed .topbar .brand, html.embed .topbar .pages { display: none; }
+html.embed .topbar {
+  position: static; background: rgba(10, 17, 26, 0.5); border: 1px solid var(--line);
+  border-radius: var(--radius); margin: 16px 16px 0; max-width: 1688px;
+}
+@media (min-width: 1720px) { html.embed .topbar { margin-left: auto; margin-right: auto; } }
+
+/* ---------- type ---------- */
+h1 { font-weight: 600; letter-spacing: 0.02em; }
+h2, h3, details.card > summary, .side-tag, .talk-log .who, table.objects th, .res, .chip,
+.seg button, .field > label, .sub-head h3, .ph-title, .kv > span:first-child {
+  font-family: var(--mono);
+}
+h2, h3 {
+  font-size: 11px; font-weight: 500; letter-spacing: 0.16em; text-transform: uppercase; color: var(--accent);
+}
+h2::before, details.card > summary::before {
+  content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 8px; vertical-align: 1px;
+  background: var(--accent); box-shadow: 0 0 8px var(--accent); border-radius: 1px;
+}
+.muted.small, #objCount, #mapNote, #pairNote { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; }
+.hint { font-size: 12px; color: var(--faint); }
+.hint b { color: var(--accent); }
+
+/* ---------- top bar ---------- */
+.topbar { background: rgba(5, 7, 10, 0.78); border-bottom: 1px solid var(--line); backdrop-filter: blur(14px) saturate(1.2); }
+.logo i { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+.logo i + i { background: var(--obj); box-shadow: 0 0 10px var(--obj); }
+.pages a { font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; border-radius: 999px; }
+.pages a[aria-current="page"] { color: var(--accent); background: rgba(125, 211, 252, 0.08); box-shadow: inset 0 0 0 1px var(--line-2); }
+.chip {
+  font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; padding: 4px 10px;
+  background: rgba(125, 211, 252, 0.04); border-color: var(--line);
+}
+.chip.ok { color: var(--ok); border-color: rgba(74, 222, 128, 0.35); box-shadow: 0 0 12px rgba(74, 222, 128, 0.12); }
+.chip.warn { color: var(--warn); border-color: rgba(245, 158, 11, 0.4); }
+.chip.busy { color: var(--accent); border-color: var(--line-2); }
+.seg { background: rgba(125, 211, 252, 0.04); border-color: var(--line); border-radius: 999px; padding: 3px; }
+.seg button { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; border-radius: 999px; padding: 5px 13px; transition: color 0.2s, background 0.2s, box-shadow 0.2s; }
+.seg button.active { background: rgba(125, 211, 252, 0.14); color: var(--accent); box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.45), var(--glow); }
+
+/* ---------- buttons & inputs ---------- */
+.btn {
+  border-radius: 999px; background: rgba(125, 211, 252, 0.05); border-color: var(--line-2);
+  padding: 6px 14px; font-weight: 500; transition: background 0.2s, border-color 0.2s, box-shadow 0.2s, color 0.2s;
+}
+.btn:hover:not(:disabled) { background: rgba(125, 211, 252, 0.12); border-color: rgba(125, 211, 252, 0.55); box-shadow: var(--glow); }
+.btn.small { padding: 4px 12px; }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); box-shadow: 0 0 20px rgba(125, 211, 252, 0.28); }
+.btn.primary:hover:not(:disabled) { background: #a5e0fd; border-color: #a5e0fd; box-shadow: 0 0 26px rgba(125, 211, 252, 0.45); }
+.btn.toggle[aria-pressed="true"] { background: rgba(125, 211, 252, 0.16); border-color: rgba(125, 211, 252, 0.7); color: var(--accent); box-shadow: var(--glow); }
+.btn.rec { color: var(--err); border-color: rgba(248, 113, 113, 0.6); }
+.link { color: var(--accent); font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+.btn:focus-visible, .seg button:focus-visible, select:focus-visible, input:focus-visible, .link:focus-visible,
+.swap:focus-visible, summary:focus-visible, .mic:focus-visible, .suggest:focus-visible { outline-color: var(--accent); }
+
+select, input[type="number"], input[type="tel"], .ask-form input {
+  background: rgba(3, 8, 13, 0.7); border: 1px solid var(--line); border-radius: 8px; color: var(--text);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+input[type="number"], .input-unit span, .res { font-family: var(--mono); }
+select:hover, input[type="number"]:hover, input[type="tel"]:hover, .ask-form input:hover { border-color: var(--line-2); }
+select:focus, input[type="number"]:focus, input[type="tel"]:focus, .ask-form input:focus {
+  outline: none; border-color: rgba(125, 211, 252, 0.6); box-shadow: 0 0 0 3px rgba(125, 211, 252, 0.12);
+}
+select option { background: #0a111a; color: var(--text); }
+.input-unit span { font-size: 11px; color: var(--faint); }
+input[type="checkbox"] { accent-color: var(--accent); }
+
+input[type="range"] { -webkit-appearance: none; appearance: none; height: 18px; background: transparent; cursor: pointer; }
+input[type="range"]::-webkit-slider-runnable-track { height: 3px; border-radius: 3px; background: linear-gradient(90deg, rgba(125, 211, 252, 0.55), rgba(125, 211, 252, 0.12)); }
+input[type="range"]::-moz-range-track { height: 3px; border-radius: 3px; background: rgba(125, 211, 252, 0.25); }
+input[type="range"]::-moz-range-progress { height: 3px; background: var(--accent); }
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 13px; height: 13px; margin-top: -5px; border-radius: 50%;
+  background: var(--bg); border: 2px solid var(--accent); box-shadow: 0 0 10px rgba(125, 211, 252, 0.6);
+}
+input[type="range"]::-moz-range-thumb { width: 11px; height: 11px; border-radius: 50%; background: var(--bg); border: 2px solid var(--accent); }
+
+/* ---------- banner & notes ---------- */
+.banner { border-radius: var(--radius); backdrop-filter: blur(10px); }
+.banner.info { border-color: var(--line-2); background: rgba(125, 211, 252, 0.07); color: #d4effe; }
+.note { color: #fde2b0; background: rgba(245, 158, 11, 0.06); border-color: rgba(245, 158, 11, 0.25); border-radius: 8px; }
+
+/* ---------- glass cards with HUD corner brackets ---------- */
+.card {
+  position: relative;
+  background: linear-gradient(180deg, rgba(14, 23, 34, 0.66), rgba(7, 12, 18, 0.58));
+  border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03), 0 18px 40px -24px rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(12px) saturate(1.15);
+  padding: 14px 16px;
+}
+.card::before, .canvas-wrap::before {
+  content: ""; position: absolute; inset: -1px; pointer-events: none; border-radius: inherit;
+  --c: rgba(125, 211, 252, 0.75); --l: 12px;
+  background:
+    linear-gradient(var(--c), var(--c)) top left / var(--l) 1px,
+    linear-gradient(var(--c), var(--c)) top left / 1px var(--l),
+    linear-gradient(var(--c), var(--c)) top right / var(--l) 1px,
+    linear-gradient(var(--c), var(--c)) top right / 1px var(--l),
+    linear-gradient(var(--c), var(--c)) bottom left / var(--l) 1px,
+    linear-gradient(var(--c), var(--c)) bottom left / 1px var(--l),
+    linear-gradient(var(--c), var(--c)) bottom right / var(--l) 1px,
+    linear-gradient(var(--c), var(--c)) bottom right / 1px var(--l);
+  background-repeat: no-repeat;
+}
+.card::before { border-radius: 0; }
+.card-head { margin-bottom: 12px; }
+details.card > summary { font-size: 11px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text); }
+details.card > summary:hover { color: var(--accent); }
+details.card > summary::after { color: var(--accent); }
+details.card[open] > summary { margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+details.adv > summary { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; }
+.field > label { font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.field > label b, #minScoreVal { color: var(--accent); font-family: var(--mono); }
+.help { color: var(--faint); }
+.kv b, #vOffset { font-family: var(--mono); color: var(--accent); font-weight: 500; }
+.kv > span:first-child { font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.calib-target, .cam-info .cam { background: rgba(3, 8, 13, 0.6); border-color: var(--line); border-radius: 8px; font-family: var(--mono); font-size: 11.5px; }
+.calib-result, .result-box { background: rgba(74, 222, 128, 0.05); border-color: rgba(74, 222, 128, 0.28); border-radius: 8px; }
+.result-box.warn { background: rgba(245, 158, 11, 0.05); border-color: rgba(245, 158, 11, 0.32); }
+.calib-result td, .calib-result th, .pc-status { font-family: var(--mono); font-size: 11.5px; }
+.rig-diagram { border: 1px solid var(--line); border-radius: 8px; background: radial-gradient(ellipse at 50% 100%, rgba(125, 211, 252, 0.08), transparent 70%), rgba(3, 8, 13, 0.6); }
+ul.checklist .ic { border-color: var(--line-2); font-family: var(--mono); }
+ul.checklist .ic.ok { background: rgba(74, 222, 128, 0.14); border-color: rgba(74, 222, 128, 0.5); color: var(--ok); box-shadow: 0 0 10px rgba(74, 222, 128, 0.2); }
+ul.checklist .ic.warn { background: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.5); }
+ol.steps li::marker { font-family: var(--mono); color: var(--accent); }
+
+/* ---------- camera views: sensor feeds ---------- */
+.view figcaption { margin-bottom: 8px; }
+.side-tag { font-size: 10px; letter-spacing: 0.16em; padding: 3px 8px; border-radius: 4px; box-shadow: 0 0 12px rgba(125, 211, 252, 0.35); }
+.res { font-size: 10.5px; color: var(--faint); letter-spacing: 0.06em; }
+.canvas-wrap {
+  border: 1px solid var(--line-2); border-radius: var(--radius); background: #05070a; isolation: isolate;
+  box-shadow: 0 0 0 1px rgba(5, 7, 10, 0.9), 0 0 30px -10px rgba(125, 211, 252, 0.25);
+}
+.canvas-wrap::before { z-index: 3; --l: 16px; --c: rgba(125, 211, 252, 0.9); inset: 6px; border-radius: 0; }
+/* Slow scan line, and a LIVE tag, only while the feed is running (placeholder hidden). */
+.canvas-wrap::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 34%; z-index: 2; pointer-events: none;
+  background: linear-gradient(180deg, transparent, rgba(125, 211, 252, 0.07) 80%, rgba(125, 211, 252, 0.28) 99%, transparent);
+  transform: translateY(-110%); opacity: 0; will-change: transform;
+}
+.canvas-wrap:has(> .placeholder[hidden])::after { opacity: 1; animation: fx-scan 6s linear infinite; }
+.view figcaption::after {
+  content: "STANDBY"; order: 9; font: 500 10px/1 var(--mono); letter-spacing: 0.16em; color: var(--faint);
+  padding: 4px 8px 4px 18px; border: 1px solid var(--line); border-radius: 999px;
+  background: radial-gradient(circle at 9px 50%, var(--faint) 0 3px, transparent 3.5px);
+}
+.view:has(.placeholder[hidden]) figcaption::after {
+  content: "LIVE"; color: var(--obj); border-color: rgba(74, 222, 128, 0.35);
+  background: radial-gradient(circle at 9px 50%, var(--obj) 0 3px, transparent 3.5px);
+  animation: fx-blink 1.6s ease-in-out infinite;
+}
+.placeholder {
+  background:
+    repeating-linear-gradient(0deg, rgba(125, 211, 252, 0.035) 0 1px, transparent 1px 4px),
+    radial-gradient(ellipse at center, rgba(125, 211, 252, 0.08) 0%, #05070a 72%);
+}
+.ph-title { font-size: 13px; font-weight: 500; letter-spacing: 0.16em; text-transform: uppercase; color: var(--accent); }
+.ph-sub { font-size: 13px; }
+.swap { background: rgba(125, 211, 252, 0.05); border-color: var(--line-2); color: var(--accent); transition: box-shadow 0.2s, border-color 0.2s; }
+.swap:hover { box-shadow: var(--glow); }
+
+/* ---------- top-down map: radar sweep ---------- */
+#map { border-radius: 8px; border: 1px solid var(--line); }
+.radar-sweep {
+  position: absolute; left: 16px; right: 16px; bottom: 14px; height: 340px; border-radius: 8px;
+  overflow: hidden; pointer-events: none; z-index: 1;
+}
+.radar-sweep::before {
+  content: ""; position: absolute; left: 50%; top: calc(100% - 24px);
+  width: 1400px; height: 1400px; margin: -700px 0 0 -700px; border-radius: 50%;
+  background: conic-gradient(from 0deg, transparent 0deg 320deg, rgba(125, 211, 252, 0.02) 330deg, rgba(125, 211, 252, 0.11) 359.4deg, rgba(125, 211, 252, 0.26) 360deg);
+  will-change: transform; animation: fx-sweep 7s linear infinite;
+}
+
+/* ---------- objects table & lists ---------- */
+table.objects { font-size: 12.5px; }
+table.objects th { font-size: 10px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); border-bottom-color: var(--line-2); }
+table.objects td { border-bottom-color: rgba(125, 211, 252, 0.08); transition: background 0.2s; }
+table.objects td:first-child { color: var(--obj); font-weight: 500; }
+table.objects td:first-child .muted { font-family: var(--mono); font-size: 10.5px; color: var(--faint); font-weight: 400; }
+table.objects td:not(:first-child) { font-family: var(--mono); font-size: 12px; }
+table.objects td b { color: var(--text); font-weight: 600; }
+table.objects tbody tr:hover td { background: rgba(125, 211, 252, 0.04); }
+table.objects tbody tr.sel td { background: rgba(74, 222, 128, 0.08); }
+table.objects tbody tr.sel td:first-child { box-shadow: inset 2px 0 0 var(--obj); }
+table.objects tr.empty td { font-family: var(--font); color: var(--muted); }
+.dot { box-shadow: 0 0 8px currentColor; border-radius: 2px; width: 8px; height: 8px; }
+.why { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
+.tag { font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.08em; background: rgba(245, 158, 11, 0.12); color: var(--warn); }
+ul.pairs li, ul.pins li, ul.samples li { border-bottom: 1px dashed rgba(125, 211, 252, 0.12); font-size: 12.5px; }
+ul.pairs li b, ul.pins li b, ul.samples li b { font-family: var(--mono); font-weight: 600; }
+ul.pairs .between { color: var(--obj); }
+li.empty { color: var(--faint); }
+
+/* ---------- conversation ---------- */
+.talk-left { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 16px; row-gap: 10px; align-items: start; }
+.talk-left > .mic { grid-column: 1; grid-row: 1; }
+.talk-left > .detail-btn { grid-column: 1; grid-row: 2; justify-self: center; font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; }
+.talk-left > .talk-main { grid-column: 2; grid-row: 1 / span 2; }
+.mic { background: radial-gradient(circle, rgba(125, 211, 252, 0.14), rgba(125, 211, 252, 0.03) 70%); border-color: rgba(125, 211, 252, 0.45); color: var(--accent); box-shadow: 0 0 24px rgba(125, 211, 252, 0.2), inset 0 0 14px rgba(125, 211, 252, 0.12); }
+.mic:hover:not(:disabled) { box-shadow: 0 0 32px rgba(125, 211, 252, 0.4), inset 0 0 14px rgba(125, 211, 252, 0.2); }
+.mic[data-state="thinking"], .mic[data-state="speaking"] { background: rgba(125, 211, 252, 0.12); }
+.mic[data-state="speaking"]::after { border-color: rgba(125, 211, 252, 0.6); }
+.talk-status { font-size: 14.5px; }
+.suggest { font-size: 11.5px; background: rgba(125, 211, 252, 0.04); border-color: var(--line); color: var(--muted); transition: color 0.2s, border-color 0.2s, box-shadow 0.2s; }
+.suggest:hover { color: var(--accent); border-color: rgba(125, 211, 252, 0.5); box-shadow: var(--glow); }
+.check { font-size: 12.5px; color: var(--muted); }
+.talk-log li { border-radius: 10px; }
+.talk-log li.you { background: rgba(255, 255, 255, 0.04); border-color: rgba(255, 255, 255, 0.08); }
+.talk-log li.bot { background: rgba(125, 211, 252, 0.07); border-color: rgba(125, 211, 252, 0.24); }
+.talk-log .who { font-size: 9.5px; letter-spacing: 0.16em; color: var(--accent); }
+.talk-log li.you .who { color: var(--faint); }
+kbd { font-family: var(--mono); border-color: var(--line-2); background: rgba(125, 211, 252, 0.06); }
+.talk-log { scrollbar-width: thin; scrollbar-color: rgba(125, 211, 252, 0.25) transparent; }
+
+/* ---------- phone card ---------- */
+.phone-panel > p { color: var(--muted); }
+.phone-panel .chip { color: var(--accent); }
+.phone-panel[data-state="connected"] { border-color: rgba(74, 222, 128, 0.5); }
+.phone-panel .phone-code { font-family: var(--mono); letter-spacing: 0.12em; color: var(--accent); text-shadow: 0 0 14px rgba(125, 211, 252, 0.5); }
+.phone-form > label { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+
+/* ---------- motion (classes set by js/futuristic.js) ---------- */
+html.fx .fx-reveal { opacity: 0; transform: translateY(12px); }
+html.fx .fx-reveal.fx-shown {
+  opacity: 1; transform: none;
+  transition: opacity 0.7s cubic-bezier(0.2, 0.7, 0.2, 1), transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1);
+  transition-delay: var(--fx-delay, 0ms);
+}
+.fx-in { animation: fx-row-in 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both; animation-delay: var(--fx-t, 0ms); }
+table.objects tr.fx-in td:first-child { animation: fx-row-flash 1s ease-out both; animation-delay: var(--fx-t, 0ms); }
+.fx-tick b { animation: fx-tick 0.8s ease-out both; animation-delay: var(--fx-k, 0ms); border-radius: 3px; }
+
+@keyframes fx-scan { from { transform: translateY(-110%); } to { transform: translateY(310%); } }
+@keyframes fx-sweep { to { transform: rotate(360deg); } }
+@keyframes fx-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+@keyframes fx-row-in { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: none; } }
+@keyframes fx-row-flash { from { box-shadow: inset 2px 0 0 var(--obj), inset 60px 0 40px -40px rgba(74, 222, 128, 0.25); } to { box-shadow: inset 2px 0 0 transparent; } }
+@keyframes fx-tick {
+  from { color: var(--accent); background: rgba(125, 211, 252, 0.18); text-shadow: 0 0 10px rgba(125, 211, 252, 0.8); }
+  to { color: inherit; background: transparent; text-shadow: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .canvas-wrap::after, .radar-sweep::before, .view:has(.placeholder[hidden]) figcaption::after { animation: none !important; }
+  .canvas-wrap::after { opacity: 0 !important; }
+  .radar-sweep { display: none; }
+  .fx-in, .fx-tick b, table.objects tr.fx-in td:first-child { animation: none !important; }
+  html.fx .fx-reveal { opacity: 1 !important; transform: none !important; transition: none !important; }
+}

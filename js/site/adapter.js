@@ -55,7 +55,14 @@ export function runPipeline({ baselineCm = 12, angleDeg = 0, hfovDeg = HFOV } = 
   const frames = rgba.map((px) => GrayFrame.fromRGBA(px, VIEW_W, VIEW_H));
   const dets = [detect(rig.left), detect(rig.right)];
   const res = measureScene(dets[0], dets[1], frames[0], frames[1], rig, { vtol: 4, tiltDeg: 0, vOffset: 0 });
-  const objects = res.objects.map((o, k) => ({ ...o, id: k + 1, name: null }));
+  // Stable ids (one per room object) so the radar can ease a blip between rig settings.
+  const used = new Set();
+  const objects = res.objects.map((o, k) => {
+    let id = SITE_ROOM_OBJECTS.findIndex((s) => s.cls === o.cls) + 1;
+    if (!id || used.has(id)) id = 100 + k;
+    used.add(id);
+    return { ...o, id, name: null };
+  });
   const images = typeof ImageData !== 'undefined' ? rgba.map((px) => new ImageData(px, VIEW_W, VIEW_H)) : rgba;
   return { rig, images, dets, objects };
 }

@@ -1,6 +1,8 @@
-// Section 2 of the landing page, "Measuring distance": a radar HUD for the two-camera rig,
-// driven by the real stereo pipeline on a synthetic room (see ./adapter.js for what is mocked).
+// Section 2 of the landing page, "Measuring distance": a radar HUD for the two-camera rig.
+// Until the visitor starts their cameras it runs the real stereo pipeline on a synthetic room
+// (see ./adapter.js for what is mocked); after that, on the live pair (./live.js).
 import { runPipeline, assistantScene, VIEW_W, VIEW_H, HFOV } from './adapter.js';
+import { LiveStereo, liveErrorText, savedRig } from './live.js';
 import { answer, answerBest, classFromPhrase } from '../assistant.js';
 import { Voice, Listener } from '../speech.js';
 import { DETAIL_PRESETS, normalizeDetail } from '../detail.js';
@@ -15,6 +17,14 @@ const NAMES = { 'dining table': 'TABLE', 'potted plant': 'PLANT', tv: 'TV' };
 const label = (cls) => NAMES[cls] ?? cls.toUpperCase();
 const sideTxt = (az) => (Math.abs(az) < 1 ? '0°' : `${Math.abs(az).toFixed(0)}° ${az < 0 ? 'L' : 'R'}`);
 const isClose = (o) => o.range != null && o.range < 1;
+const fmtN = (x) => (Number.isInteger(x) ? String(x) : x.toFixed(1));
+const CAM_ICON = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" d="M3 7.5h3.2L8 5h8l1.8 2.5H21V19H3z"/><circle cx="12" cy="12.8" r="3.6" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>';
+const camBox = (i, name) => `
+          <div class="rs-cam" data-k="cam${i}">
+            <video muted playsinline autoplay data-k="vid${i}"></video>
+            <div class="rs-cam-ph">${CAM_ICON}<span class="rs-cam-name">${name} · OFF</span><button class="rs-start" type="button" data-start>Start cameras</button></div>
+            <div class="rs-cam-lbl"><i class="rs-live-dot"></i>${name} · LIVE</div>
+          </div>`;
 const el = (tag, cls, html) => {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -33,23 +43,29 @@ export function mountRadar(section) {
     </header>
     <div class="rs-grid">
       <div class="rs-panel rs-radar">
-        <div class="rs-hud rs-hud-tl"><span class="rs-dot"></span>LIVE · SYNTHETIC ROOM</div>
+        <div class="rs-hud rs-hud-tl"><span class="rs-dot"></span><span data-k="mode">DEMO · SYNTHETIC ROOM</span></div>
         <div class="rs-hud rs-hud-tr" data-k="rig"></div>
         <canvas class="rs-radar-cv" aria-label="Radar view of measured objects"></canvas>
         <div class="rs-hud rs-hud-bl"><i class="rs-key rs-key-ov"></i>STEREO OVERLAP <i class="rs-key rs-key-warm"></i>&lt; 1 m</div>
       </div>
       <aside class="rs-side">
-        <div class="rs-panel rs-views">
-          <div class="rs-ph"><span>LEFT CAM</span><span class="rs-mut">matched features</span><span>RIGHT CAM</span></div>
-          <canvas class="rs-views-cv" aria-label="Left and right camera views with matched points"></canvas>
+        <div class="rs-panel rs-views" data-k="views" data-mode="demo">
+          <div class="rs-ph"><span>LEFT · MATCHED</span><span class="rs-mut" data-k="vsrc">synthetic room</span><span>RIGHT · MATCHED</span></div>
+          <div class="rs-quad">
+            <canvas class="rs-views-cv" aria-label="Left and right camera views with detections and matched points"></canvas>${camBox(0, 'LEFT')}${camBox(1, 'RIGHT')}
+          </div>
+          <div class="rs-livebar">
+            <span class="rs-livemsg" data-k="livemsg" aria-live="polite"></span>
+            <button class="rs-demo-btn" type="button" data-k="demoBtn" hidden>Use demo</button>
+          </div>
         </div>
         <div class="rs-panel rs-controls">
           <label class="rs-slider"><span>BASELINE</span><input type="range" min="4" max="40" step="1" value="12" data-k="base"><output data-k="baseOut">12 cm</output></label>
-          <label class="rs-slider"><span>TOE-IN</span><input type="range" min="0" max="30" step="1" value="0" data-k="toe"><output data-k="toeOut">0°</output></label>
+          <label class="rs-slider"><span>TOE-IN</span><input type="range" min="-15" max="30" step="1" value="0" data-k="toe"><output data-k="toeOut">0°</output></label>
         </div>
         <div class="rs-panel rs-formula">
           <div class="rs-ph"><span>DEPTH</span><span class="rs-mut" data-k="fsel"></span></div>
-          <div class="rs-eq" data-k="eq"></div>
+          <div class="rs-eq" data-k="eq">Z = <b>f</b> · <b>B</b> / <b>d</b><span class="rs-eqv" data-k="eqv"><br>Z = <b data-k="ef"></b> · <b data-k="eB"></b> / <b data-k="ed"></b> = <em data-k="eZ"></em></span></div>
           <div class="rs-eqnote" data-k="eqnote"></div>
         </div>
       </aside>
@@ -82,23 +98,46 @@ export function mountRadar(section) {
   const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 
   const st = {
-    base: 12, toe: 0, data: null, hover: null, sel: null, pulse: null, lit: new Map(),
+    base: 12, toe: 0, hfov: HFOV, data: null, hover: null, sel: null, pulse: null, lit: new Map(),
     sweep: -60, dir: 1, active: false, raf: 0, last: 0, pending: true, ctx: {}, listening: false,
     detail: normalizeDetail(DETAIL_PRESETS.normal), lastQ: null, lastCtx: {},
+    mode: 'demo', // 'demo' | 'starting' | 'live'
+    demoRig: null, // the demo's slider values while live
+    blips: new Map(), // id → { r, az, tr, taz, a, gone, o }: eased radar positions
+    eq: null, eqT: null, // formula numbers shown / target
+    entered: false,
   };
   const offs = [0, 1].map(() => Object.assign(document.createElement('canvas'), { width: VIEW_W, height: VIEW_H }));
+  const animating = () => st.active && !reduced;
 
   // ----------------------------------------------------------------------------- pipeline
   function recompute() {
     st.pending = false;
-    st.data = runPipeline({ baselineCm: st.base, angleDeg: st.toe, hfovDeg: HFOV });
-    st.data.images.forEach((img, i) => offs[i].getContext('2d').putImageData(img, 0, 0));
-    if (st.sel != null && !st.data.objects.some((o) => o.id === st.sel && o.range != null)) st.sel = null;
-    $('rig').textContent = `B ${st.base} cm · TOE-IN ${st.toe}° · HFOV ${HFOV}° · f ${st.data.rig.left.f.toFixed(0)} px`;
+    // Live: the next measurement reads the sliders; only the rig drawing changes now.
+    if (st.mode === 'live') {
+      updateRigHud();
+      if (!st.raf) drawRadar();
+      return;
+    }
+    const d = runPipeline({ baselineCm: st.base, angleDeg: st.toe, hfovDeg: HFOV });
+    d.images.forEach((img, i) => offs[i].getContext('2d').putImageData(img, 0, 0));
+    setData({ rig: d.rig, objects: d.objects, srcs: offs, srcW: VIEW_W, srcH: VIEW_H });
+  }
+  /** One measured frame pair, demo or live: { rig, objects, srcs: [canvas, canvas], srcW, srcH }. */
+  function setData(d) {
+    st.data = d;
+    if (st.sel != null && !d.objects.some((o) => o.id === st.sel && o.range != null)) st.sel = null;
+    if (st.hover != null && !d.objects.some((o) => o.id === st.hover)) st.hover = null;
+    updateRigHud();
+    syncBlips(!animating());
     renderTable();
     renderFormula();
     drawViews();
-    drawRadar();
+    if (!st.raf) drawRadar();
+  }
+  function updateRigHud() {
+    const f = st.data?.rig?.left.f;
+    $('rig').textContent = `B ${fmtN(st.base)} cm · TOE-IN ${fmtN(st.toe)}° · HFOV ${fmtN(st.hfov)}°${f ? ` · f ${f.toFixed(0)} px` : ''}`;
   }
   let qRaf = 0;
   const schedule = () => {
@@ -110,21 +149,69 @@ export function mountRadar(section) {
   const closest = () => objects().filter((o) => o.range != null).sort((a, b) => a.range - b.range)[0] ?? null;
   const selected = () => objects().find((o) => o.id === st.sel) ?? closest();
 
+  // ----------------------------------------------------------------------------- blips (eased)
+  function syncBlips(snap) {
+    const seen = new Set();
+    for (const o of objects()) {
+      seen.add(o.id);
+      const r = Math.min(o.range ?? MAX_R, MAX_R + 0.2), az = o.azimuth;
+      let b = st.blips.get(o.id);
+      if (!b) st.blips.set(o.id, (b = { r, az, a: 0 }));
+      Object.assign(b, { o, tr: r, taz: az, gone: false });
+      if (snap) Object.assign(b, { r, az, a: 1 });
+    }
+    for (const [id, b] of st.blips) {
+      if (seen.has(id)) continue;
+      b.gone = true;
+      if (snap) st.blips.delete(id);
+    }
+  }
+  function easeBlips(dt) {
+    const k = 1 - Math.exp(-dt * 8);
+    for (const [id, b] of st.blips) {
+      b.r += (b.tr - b.r) * k;
+      b.az += (b.taz - b.az) * k;
+      b.a = b.gone ? b.a - dt * 3 : Math.min(1, b.a + dt * 4);
+      if (b.gone && b.a <= 0) st.blips.delete(id);
+    }
+  }
+
   // ----------------------------------------------------------------------------- table
+  const rows = new Map(); // id → <tr>, kept across frames so rows can animate in and out
   function renderTable() {
     const tb = $('tbody');
-    tb.innerHTML = '';
-    for (const o of [...objects()].sort((a, b) => (a.range ?? 99) - (b.range ?? 99))) {
-      const tr = el('tr', isClose(o) ? 'is-warm' : '');
-      tr.dataset.id = o.id;
-      const q = o.quality === 'rough' ? ' <span class="rs-tag">ROUGH</span>' : '';
-      tr.innerHTML = `<td>${label(o.cls)}</td><td>${o.range != null ? o.range.toFixed(2) + ' m' : '—'}${q}</td><td>${sideTxt(o.azimuth)}</td><td>${(o.score * 100).toFixed(0)}%</td>`;
-      tr.addEventListener('mouseenter', () => setHover(o.id));
-      tr.addEventListener('mouseleave', () => setHover(null));
-      tr.addEventListener('click', () => select(o.id));
-      tb.append(tr);
+    const list = [...objects()].sort((a, b) => (a.range ?? 99) - (b.range ?? 99));
+    const keep = new Set(list.map((o) => o.id));
+    for (const [id, tr] of rows) {
+      if (keep.has(id)) continue;
+      rows.delete(id);
+      if (!animating()) { tr.remove(); continue; }
+      tr.classList.add('is-out');
+      setTimeout(() => tr.remove(), 260);
     }
+    list.forEach((o, i) => {
+      let tr = rows.get(o.id);
+      if (!tr) {
+        tr = el('tr', animating() ? 'is-new' : '', '<td></td><td></td><td></td><td></td>');
+        tr.dataset.id = o.id;
+        tr.addEventListener('animationend', () => tr.classList.remove('is-new'));
+        tr.addEventListener('mouseenter', () => setHover(o.id));
+        tr.addEventListener('mouseleave', () => setHover(null));
+        tr.addEventListener('click', () => select(o.id));
+        rows.set(o.id, tr);
+      }
+      tr.classList.toggle('is-warm', isClose(o));
+      const q = o.quality === 'rough' ? ' <span class="rs-tag">ROUGH</span>' : '';
+      const cells = [label(o.cls), `${o.range != null ? o.range.toFixed(2) + ' m' : '—'}${q}`, sideTxt(o.azimuth), `${(o.score * 100).toFixed(0)}%`];
+      cells.forEach((h, c) => { if (tr.cells[c].innerHTML !== h) tr.cells[c].innerHTML = h; });
+      // Move only when out of place, so a row's entry animation isn't restarted.
+      if (tb.children[i] !== tr) tb.insertBefore(tr, tb.children[i] ?? null);
+    });
     syncRows();
+  }
+  function clearTable() {
+    rows.clear();
+    $('tbody').innerHTML = '';
   }
   function syncRows() {
     const sel = selected()?.id;
@@ -153,22 +240,42 @@ export function mountRadar(section) {
   function renderFormula() {
     const o = selected();
     const rig = st.data?.rig;
-    if (!o || !rig) {
-      $('eq').innerHTML = 'Z = f · B / d';
-      $('eqnote').textContent = 'No object measured.';
+    if (!o || !rig || o.range == null) {
+      st.eqT = null;
+      $('eqv').hidden = true;
+      $('eqnote').textContent = st.mode === 'live' ? 'No object measured yet. Point the rig at a person, chair, cup…' : 'No object measured.';
       $('fsel').textContent = '';
       return;
     }
     const f = rig.left.f, B = rig.baseline;
     const Z = o.point ? o.point[2] : o.range;
-    // Disparity of the matched sample the pipeline used (or, after toe-in, its rectified equivalent).
-    const s = o.samples.find((x) => x.ok && x.m.tri?.point === o.point);
-    let d = s ? Math.abs(s.m.uA - s.m.uB) : null, rect = st.toe > 0 || !s;
+    // Disparity of the matched sample the pipeline used (or, with an angle, its rectified equivalent).
+    const s = o.samples?.find((x) => x.ok && x.m.tri?.point === o.point);
+    let d = s ? Math.abs(s.m.uA - s.m.uB) : null;
+    const rect = st.toe !== 0 || !s;
     if (rect) d = (f * B) / Z;
-    const z2 = (f * B) / d;
+    st.eqT = { f, B, d, warm: isClose(o) };
+    if (!st.eq || !animating()) st.eq = { ...st.eqT };
+    $('eqv').hidden = false;
+    writeEq();
     $('fsel').textContent = `${label(o.cls)}${st.sel == null ? ' · closest' : ''}`;
-    $('eq').innerHTML = `Z = <b>f</b> · <b>B</b> / <b>d</b><br><span class="rs-eqv">Z = <b>${f.toFixed(0)} px</b> · <b>${B.toFixed(2)} m</b> / <b>${d.toFixed(1)} px</b> = <em class="${isClose(o) ? 'warm' : ''}">${z2.toFixed(2)} m</em></span>`;
-    $('eqnote').textContent = `${rect ? 'Toe-in: disparity after rectification. ' : ''}Depth along the axis; slant range ${o.range?.toFixed(2) ?? '—'} m (${o.quality}). Click a blip to switch.`;
+    const why = st.mode === 'live' ? 'Tracked over the last second. ' : rect ? 'Toe-in: disparity after rectification. ' : '';
+    $('eqnote').textContent = `${why}Depth along the axis; slant range ${o.range.toFixed(2)} m (${o.quality}). Click a blip to switch.`;
+  }
+  // The numbers tick toward their new values; Z is always f · B / d of what's on screen.
+  const eqTxt = { ef: '', eB: '', ed: '', eZ: '' };
+  function writeEq() {
+    const e = st.eq;
+    if (!e) return;
+    const t = { ef: `${e.f.toFixed(0)} px`, eB: `${e.B.toFixed(2)} m`, ed: `${e.d.toFixed(1)} px`, eZ: `${((e.f * e.B) / e.d).toFixed(2)} m` };
+    for (const k in t) if (t[k] !== eqTxt[k]) $(k).textContent = eqTxt[k] = t[k];
+    $('eZ').classList.toggle('warm', !!st.eqT?.warm);
+  }
+  function easeEq(dt) {
+    if (!st.eq || !st.eqT) return;
+    const k = 1 - Math.exp(-dt * 10);
+    for (const key of ['f', 'B', 'd']) st.eq[key] += (st.eqT[key] - st.eq[key]) * k;
+    writeEq();
   }
 
   // ----------------------------------------------------------------------------- canvases
@@ -185,14 +292,20 @@ export function mountRadar(section) {
   }
 
   function drawViews() {
-    if (!st.data) return;
+    const d = st.data;
+    if (!d) return;
     const w = viewsCv.clientWidth || 640;
-    const gap = 10, vw = (w - gap) / 2, k = vw / VIEW_W, vh = VIEW_H * k;
+    const gap = 10, vw = (w - gap) / 2, k = vw / d.srcW, vh = d.srcH * k;
     const { g } = fit(viewsCv, vh);
     g.clearRect(0, 0, w, vh);
     g.imageSmoothingEnabled = true;
-    offs.forEach((c, i) => g.drawImage(c, i * (vw + gap), 0, vw, vh));
     const ox = [0, vw + gap];
+    d.srcs.forEach((c, i) => {
+      g.drawImage(c, ox[i], 0, vw, vh);
+      g.strokeStyle = rgba(ACCENT, 0.2);
+      g.lineWidth = 1;
+      g.strokeRect(ox[i] + 0.5, 0.5, vw - 1, vh - 1);
+    });
     const sel = selected()?.id;
     for (const o of objects()) {
       const hot = o.id === st.hover || o.id === sel;
@@ -244,7 +357,7 @@ export function mountRadar(section) {
   function cone(apexX, yaw) {
     const pts = [[apexX, geo.cy]];
     const R = (MAX_R + 0.3) * geo.s;
-    for (let a = yaw - HFOV / 2; a <= yaw + HFOV / 2 + 1e-6; a += 2) pts.push([apexX + Math.sin(a * DEG) * R, geo.cy - Math.cos(a * DEG) * R]);
+    for (let a = yaw - st.hfov / 2; a <= yaw + st.hfov / 2 + 1e-6; a += 2) pts.push([apexX + Math.sin(a * DEG) * R, geo.cy - Math.cos(a * DEG) * R]);
     return pts;
   }
   // Sutherland–Hodgman: clip polygon `p` by convex polygon `c` (both clockwise on screen).
@@ -271,9 +384,7 @@ export function mountRadar(section) {
     g.closePath();
   };
 
-  function blipXY(o) {
-    return toXY(Math.min(o.range ?? MAX_R, MAX_R + 0.2), o.azimuth);
-  }
+  const blipXY = (b) => toXY(b.r, b.az);
 
   function drawRadar(now = performance.now()) {
     const { g, w, h } = fit(radarCv);
@@ -359,9 +470,11 @@ export function mountRadar(section) {
     // Blips.
     const sel = selected()?.id;
     const placed = [];
-    for (const o of objects()) {
-      const [x, y] = blipXY(o);
+    for (const b of st.blips.values()) {
+      const o = b.o;
+      const [x, y] = blipXY(b);
       const col = isClose(o) ? WARM : OBJ;
+      g.globalAlpha = Math.max(0, Math.min(1, b.a));
       const lit = reduced ? 1 : st.lit.get(o.id) ?? 0;
       const hot = o.id === st.hover || o.id === sel;
       const a = o.range == null ? 0.35 : 0.5 + 0.5 * lit;
@@ -403,6 +516,7 @@ export function mountRadar(section) {
       g.fillStyle = rgba(col, hot ? 1 : 0.55 + 0.45 * lit);
       g.fillText(txt, lx, ly);
     }
+    g.globalAlpha = 1;
     g.restore();
 
     // Range labels along the centre line, cameras and baseline.
@@ -442,7 +556,7 @@ export function mountRadar(section) {
     g.lineTo(cx + half, cy + 12);
     g.stroke();
     g.fillStyle = rgba(ACCENT, 0.9);
-    g.fillText(`B = ${st.base} cm (not to scale)`, cx, cy + 23);
+    g.fillText(`B = ${fmtN(st.base)} cm (not to scale)`, cx, cy + 23);
     g.textAlign = 'left';
   }
 
@@ -459,6 +573,8 @@ export function mountRadar(section) {
       const v = o.azimuth >= lo && o.azimuth <= hi ? 1 : Math.max(0, (st.lit.get(o.id) ?? 0) - dt * 0.55);
       st.lit.set(o.id, v);
     }
+    easeBlips(dt);
+    easeEq(dt);
     drawRadar(t);
     drawWave();
   }
@@ -469,10 +585,11 @@ export function mountRadar(section) {
     const r = radarCv.getBoundingClientRect();
     const x = ev.clientX - r.left, y = ev.clientY - r.top;
     let best = null, bd = 16;
-    for (const o of objects()) {
-      const [bx, by] = blipXY(o);
+    for (const b of st.blips.values()) {
+      if (b.gone) continue;
+      const [bx, by] = blipXY(b);
       const d = Math.hypot(bx - x, by - y);
-      if (d < bd) { bd = d; best = o; }
+      if (d < bd) { bd = d; best = b.o; }
     }
     return best;
   }
@@ -487,6 +604,130 @@ export function mountRadar(section) {
   // ----------------------------------------------------------------------------- controls
   $('base').addEventListener('input', (e) => { st.base = Number(e.target.value); $('baseOut').textContent = `${st.base} cm`; schedule(); });
   $('toe').addEventListener('input', (e) => { st.toe = Number(e.target.value); $('toeOut').textContent = `${st.toe}°`; schedule(); });
+  function syncSliders() {
+    $('base').value = String(st.base);
+    $('toe').value = String(st.toe);
+    $('baseOut').textContent = `${fmtN(st.base)} cm`;
+    $('toeOut').textContent = `${fmtN(st.toe)}°`;
+  }
+
+  // ----------------------------------------------------------------------------- live cameras
+  const viewsPanel = $('views');
+  const vids = [$('vid0'), $('vid1')];
+  const camEls = [$('cam0'), $('cam1')];
+  const startBtns = [...section.querySelectorAll('[data-start]')];
+  const live = new LiveStereo({
+    getRig: () => ({ baselineCm: st.base, angleDeg: st.toe }),
+    onResult: (res) => {
+      if (st.mode !== 'live') return;
+      setData({ rig: res.rig, objects: res.objects, srcs: res.canvases, srcW: res.w, srcH: res.h });
+      if (live.detectorStatus === 'ready') liveMsg(`${live.labels.join(' ↔ ')} · ${res.hz ? res.hz.toFixed(1) + ' Hz' : ''}`);
+    },
+    onStatus: (kind, v) => {
+      if (st.mode !== 'live') return;
+      if (kind === 'ended') useDemo(`The ${v === 0 ? 'left' : 'right'} camera disconnected — back to the demo room.`);
+      else if (kind === 'detector' && v === 'loading') liveMsg('Loading the object detector (first time only, a few MB)…');
+      else if (kind === 'detector' && v === 'error') liveMsg("Couldn't download the object detector (it needs the internet the first time). The cameras still run.", 'err');
+    },
+  });
+  const liveMsg = (t, kind = 'info') => {
+    const m = $('livemsg');
+    if (m.textContent !== t) m.textContent = t || '';
+    m.dataset.kind = kind;
+  };
+  const CHIPS = {
+    demo: ["What's closest to me?", 'How far is the sofa?', "What's on my left?"],
+    live: ["What's closest to me?", 'How far is the person?', "What's on my left?"],
+  };
+  function renderChips() {
+    $('chips').innerHTML = '';
+    for (const c of CHIPS[st.mode === 'live' ? 'live' : 'demo']) {
+      const b = el('button', 'rs-chip', c);
+      b.type = 'button';
+      b.addEventListener('click', () => { $('q').value = c; ask(c); });
+      $('chips').append(b);
+    }
+  }
+  function setMode(m) {
+    const was = st.mode;
+    st.mode = m;
+    viewsPanel.dataset.mode = m;
+    $('mode').textContent = m === 'live' ? 'LIVE · 2 CAM' : m === 'starting' ? 'STARTING CAMERAS…' : 'DEMO · SYNTHETIC ROOM';
+    $('vsrc').textContent = m === 'live' ? 'live · detected' : 'synthetic room';
+    for (const b of startBtns) {
+      b.disabled = m !== 'demo';
+      b.textContent = m === 'starting' ? 'Starting…' : 'Start cameras';
+    }
+    $('demoBtn').hidden = m === 'demo';
+    if ((was === 'live') !== (m === 'live')) renderChips();
+  }
+  function scanFlash() {
+    if (reduced) return;
+    for (const c of camEls) {
+      c.classList.remove('is-scan');
+      void c.offsetWidth; // restart the animation
+      c.classList.add('is-scan');
+    }
+  }
+  for (const c of camEls) c.addEventListener('animationend', (e) => { if (e.animationName === 'rs-scan') c.classList.remove('is-scan'); });
+
+  async function startLive() {
+    if (st.mode !== 'demo') return;
+    setMode('starting');
+    liveMsg('Asking for camera access…');
+    let info;
+    try {
+      info = await live.start();
+    } catch (e) {
+      if (e?.name === 'Cancelled' || st.mode !== 'starting') return;
+      setMode('demo');
+      liveMsg(liveErrorText(e), 'err');
+      return;
+    }
+    if (st.mode !== 'starting') { live.stop(); return; }
+    // The rig the Measure page saved; the sliders override it from here on.
+    const rig = savedRig();
+    st.demoRig = { base: st.base, toe: st.toe };
+    st.base = rig.baselineCm;
+    st.toe = rig.angleDeg;
+    st.hfov = rig.hfovDeg;
+    syncSliders();
+    live.streams.forEach((s, i) => {
+      vids[i].srcObject = s;
+      vids[i].play().catch(() => {});
+    });
+    const size = live.size;
+    if (size) viewsPanel.style.setProperty('--cam-ar', `${size.w} / ${size.h}`);
+    // Clear the demo's objects so they fade out while the first live pair is measured.
+    st.sel = st.hover = null;
+    clearTable();
+    setMode('live');
+    setData({ ...st.data, objects: [] });
+    scanFlash();
+    liveMsg(`${info.labels.join(' ↔ ')}${info.calibrated ? ' · calibrated rig' : ' · rig from the Measure page'}`);
+    live.pause(!st.active);
+    if (!st.active) vids.forEach((v) => v.pause());
+  }
+  function useDemo(note = '') {
+    live.stop();
+    vids.forEach((v) => { v.pause(); v.srcObject = null; });
+    viewsPanel.style.removeProperty('--cam-ar');
+    if (st.demoRig) {
+      st.base = st.demoRig.base;
+      st.toe = st.demoRig.toe;
+      st.demoRig = null;
+    }
+    st.hfov = HFOV;
+    syncSliders();
+    st.sel = st.hover = null;
+    st.blips.clear();
+    clearTable();
+    setMode('demo');
+    liveMsg(note);
+    recompute();
+  }
+  for (const b of startBtns) b.addEventListener('click', startLive);
+  $('demoBtn').addEventListener('click', () => useDemo());
 
   // ----------------------------------------------------------------------------- voice agent
   const voice = new Voice();
@@ -495,7 +736,11 @@ export function mountRadar(section) {
   const msg = (t) => { $('msg').textContent = t || ''; };
 
   // The scene the assistant sees, with the level of detail picked in the Droid pop-up.
-  const scene = () => ({ ...assistantScene(objects()), detail: st.detail });
+  const scene = () => {
+    const s = { ...assistantScene(objects()), detail: st.detail, hfovDeg: st.hfov };
+    if (st.mode === 'live') s.status = { loading: 'loading', error: 'detector-error' }[live.detectorStatus] ?? 'ok';
+    return s;
+  };
   function respond(r, heard) {
     if (r.intent !== 'detail') { st.lastQ = heard; st.lastCtx = st.ctx; }
     st.ctx = r.ctx;
@@ -531,12 +776,7 @@ export function mountRadar(section) {
   const escapeHtml = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
   $('form').addEventListener('submit', (e) => { e.preventDefault(); ask($('q').value); });
-  for (const c of ["What's closest to me?", 'How far is the sofa?', "What's on my left?"]) {
-    const b = el('button', 'rs-chip', c);
-    b.type = 'button';
-    b.addEventListener('click', () => { $('q').value = c; ask(c); });
-    $('chips').append(b);
-  }
+  renderChips();
 
   // Droid detail pop-up: applies the preset the way the Measure page does (scene.detail), then
   // re-asks the last question so the caption visibly changes.
@@ -637,6 +877,11 @@ export function mountRadar(section) {
       on = !!on;
       if (on === st.active) return;
       st.active = on;
+      // Panels fade and slide in the first time the section comes into view.
+      if (on && !st.entered) { st.entered = true; section.classList.add('is-in'); }
+      // Off-screen: no measuring and no drawing; the cameras stay open so coming back is instant.
+      live.pause(!on);
+      if (st.mode === 'live') vids.forEach((v) => (on ? v.play().catch(() => {}) : v.pause()));
       if (on && !reduced) {
         st.last = 0;
         st.raf = requestAnimationFrame(frame);
@@ -644,12 +889,16 @@ export function mountRadar(section) {
         cancelAnimationFrame(st.raf);
         st.raf = 0;
         if (!on) { listener.abort(); voice.cancel(); }
+        syncBlips(true);
+        if (st.eqT) { st.eq = { ...st.eqT }; writeEq(); }
         drawRadar();
       }
     },
     dispose() {
       cancelAnimationFrame(st.raf);
       cancelAnimationFrame(qRaf);
+      live.dispose();
+      vids.forEach((v) => { v.pause(); v.srcObject = null; });
       ro?.disconnect();
       droid.dispose();
       listener.abort();

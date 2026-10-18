@@ -33,11 +33,12 @@
 
   <div class="stage" id="stage" aria-hidden="true"></div>
   <div class="stage-shade" id="stageShade" aria-hidden="true"></div>
+  <div class="warp" id="warp" aria-hidden="true"></div>
 
   <header class="topbar">
     <a class="brand" href="index.html" aria-label="Stereo Map home">
-      <span class="logo" aria-hidden="true"><i></i><i></i></span>
-      <span>Stereo Map</span>
+      <span class="logo" aria-hidden="true"><i></i><b></b><i></i></span>
+      <span class="wordmark">Stereo<em>Map</em></span>
     </a>
   </header>
 
@@ -48,6 +49,10 @@
         <span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span>
       </div>
       <a class="scroll-hint" href="#measure" id="scrollHint" aria-label="Scroll to the two-camera rig"><i aria-hidden="true"></i></a>
+      <button type="button" class="scan-btn" id="btnScan" aria-label="Scan your own space with your cameras">
+        <span class="scan-ring" aria-hidden="true"><i></i></span>
+        <span class="scan-label mono" aria-hidden="true">Scan your space</span>
+      </button>
     </section>
 
     <section class="radar-sec" id="measure" aria-label="Measuring distance"></section>

@@ -107,8 +107,19 @@ function wireLook() {
   });
 }
 
+// Scan your own space: wipe to black and hand over to live mapping with the cameras.
+function wireScan() {
+  $('btnScan').addEventListener('click', () => {
+    $('warp').classList.add('go');
+    setTimeout(() => { location.href = 'map.html?start=cameras'; }, reduced ? 0 : 700);
+  });
+  // Coming back with the Back button restores this page as it was: lift the wipe again.
+  addEventListener('pageshow', (e) => { if (e.persisted) $('warp').classList.remove('go'); });
+}
+
 progress(0.05);
 wireLook();
+wireScan();
 // The CDN scripts are deferred, so they've run by the time this module does.
 wireScroll();
 startHero();

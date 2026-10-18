@@ -992,7 +992,9 @@ async function init() {
   } catch (e) {
     $('view3d').innerHTML = '<p class="muted pad">The 3D view needs three.js from the internet. The floor plan and directions still work.</p>';
   }
-  if (camerasSupported() && (await cameraPermission()) === 'granted' && rigSettings.deviceIds?.[0]) {
+  // From the landing page's scan button: go straight to mapping with the cameras.
+  if (new URLSearchParams(location.search).get('start') === 'cameras' && camerasSupported()) startCameras();
+  else if (camerasSupported() && (await cameraPermission()) === 'granted' && rigSettings.deviceIds?.[0]) {
     $('placeholderNote').textContent = 'Cameras are allowed: press Start mapping with cameras when you are ready to walk.';
   }
 }

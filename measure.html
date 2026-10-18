@@ -1,11 +1,17 @@
 <!doctype html>
 <html lang="en">
 <head>
+  <script>const embed = new URLSearchParams(location.search).has('embed'); if (embed) document.documentElement.classList.add('embed'); else if (!location.search.includes('standalone')) location.replace('index.html#measure');</script>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Stereo Distance</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='9' cy='16' r='6' fill='%2338bdf8'/%3E%3Ccircle cx='23' cy='16' r='6' fill='%23fb923c'/%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='9' cy='16' r='6' fill='%237dd3fc'/%3E%3Ccircle cx='23' cy='16' r='6' fill='%234ade80'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/futuristic.css">
+  <script type="module" src="js/futuristic.js"></script>
 </head>
 <body>
   <header class="topbar">
@@ -106,6 +112,7 @@
           <button type="button" class="mic" id="btnMic" data-state="idle" aria-label="Ask a question" title="Ask a question (A)">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z"/></svg>
           </button>
+          <button type="button" class="btn small detail-btn" id="btnDetail" title="Change how detailed answers are — Droid edits the assistant">Detail</button>
           <div class="talk-main">
             <div class="talk-status" id="talkStatus" aria-live="polite"></div>
             <form class="ask-form" id="askForm" autocomplete="off">
@@ -135,6 +142,7 @@
             <h2>Top-down map</h2>
             <span class="muted small" id="mapNote">Rig at the bottom, forward is up</span>
           </div>
+          <div class="radar-sweep" aria-hidden="true"></div>
           <canvas id="map"></canvas>
         </div>
         <div class="card list-card">
