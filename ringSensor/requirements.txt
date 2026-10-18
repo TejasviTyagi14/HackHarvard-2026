@@ -1,0 +1,5 @@
+numpy>=1.26
+opencv-python>=4.8
+ultralytics>=8.3          # YOLO detector backend; pulls in torch
+pytest>=8                 # tests only
+reportlab>=4              # only to rebuild docs/detectObject_IO.pdf

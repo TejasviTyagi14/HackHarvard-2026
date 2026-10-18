@@ -1,5 +1,8 @@
 # Stereo Distance
 
+> This repo also holds **[ringSensor/](ringSensor/)**, the Python detectObject algorithm. In it,
+> Droid sets the detail level λ while the algorithm runs.
+
 A local website that takes your two IC780 webcams, shows both feeds side by side, boxes the
 objects it recognises, and labels each one with a distance and a direction:
 

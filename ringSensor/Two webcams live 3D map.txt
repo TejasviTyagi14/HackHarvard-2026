@@ -1,0 +1,269 @@
+Two webcams → live 3D map → directions, on your laptop
+
+Your machine: ThinkPad X13 Gen 1 with an i5-10310U (4 cores, 15 W), 16 GB RAM, integrated Intel graphics only (no CUDA), Ubuntu 26.04, Python 3.14. It has two separate USB controllers, which matters for running two webcams. I measured the timings below on this laptop while it was on battery with Firefox open. The CPU stayed at about 1.9 GHz, so treat the numbers as worst case.
+
+Bottom line
+- Everything has to run on the CPU. The recipe that fits: cheap tracking on every frame, dense depth only on selected "keyframes", and a 2D obstacle map as what the route planner uses. A 3D mesh is optional, mainly for viewing.
+- Most efficient full system: RTAB-Map for tracking, drift correction and the obstacle map, plus a small Python program of your own for routing and spoken directions (or Nav2 if it's a robot). RTAB-Map installs with apt through ROS 2 Lyrical.
+- The biggest risk is camera sync, not CPU. Two free-running webcams can capture up to 16 ms apart, which gives about 15% depth error during an ordinary 30°/s turn.
+- Directions: compute a cost map rooted at the goal once (about 60 ms). Then 10 times a second, read the route from it and turn it into turn-by-turn instructions. Re-routing costs microseconds.
+- Not feasible live: recent GPU methods (DROID-SLAM, MASt3R-SLAM, VGGT, Gaussian splatting, learned stereo). They can only run offline on a rented GPU.
+
+Part 1: How the image stream becomes a 3D model
+
+Two calibrated cameras give real-world depth by triangulation: Z = f·B/d (focal length × camera spacing ÷ pixel offset between the two views). To put each depth map into one shared model, the algorithm also has to know where the cameras were at that moment. So it solves position and map together; this is called SLAM. A 15 W CPU can't fully process 30 image pairs per second, so the work is split by how often each step runs:
+
+┌──────────────┬────────────────────────────────┬──────────────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────┐
+│    Stage     │              Runs              │                             What it does                             │                 Measured cost here                  │
+├──────────────┼────────────────────────────────┼──────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────┤
+│ Capture      │ every frame                    │ one thread per camera keeps the newest frame and its timestamp;      │ about 1–3 ms per image to decode                    │
+│              │                                │ frames are paired by timestamp                                       │                                                     │
+├──────────────┼────────────────────────────────┼──────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────┤
+│ Rectify      │ every frame                    │ precomputed tables warp both images so matching points sit on the    │ about 1 ms per image                                │
+│              │                                │ same row                                                             │                                                     │
+├──────────────┼────────────────────────────────┼──────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────┤
+│ Tracking     │ every frame                    │ follows a few hundred image features and computes the camera's       │ optical flow (KLT): about 10 ms; ORB features on    │
+│              │                                │ position                                                             │ both images: 30–40 ms                               │
+├──────────────┼────────────────────────────────┼──────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────┤
+│ Keyframe     │ every frame                    │ keeps a frame only after about 10 cm or 6° of movement               │ negligible                                          │
+│ choice       │                                │                                                                      │                                                     │
+├──────────────┼────────────────────────────────┼──────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────┤
+│ Dense depth  │ keyframes, 2–5 per second      │ stereo matching (SGBM) turns a pair into a depth map                 │ 8–54 ms (table below)                               │
+├──────────────┼────────────────────────────────┼──────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────┤
+│ Fusion       │ keyframes                      │ adds the depth to a 3D volume and to the 2D obstacle map             │ about 1 ms at 5 cm detail, 4 ms at 2 cm (OpenCV 5's │
+│              │                                │                                                                      │  built-in TSDF)                                     │
+├──────────────┼────────────────────────────────┼──────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────┤
+│ Loop closure │ about once per second, in the  │ recognizes a place it has seen before and corrects the accumulated   │ RTAB-Map default                                    │
+│              │ background                     │ drift                                                                │                                                     │
+└──────────────┴────────────────────────────────┴──────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────┘
+
+How it copes with a stream that never ends:
+- Memory grows with the area explored, not with time: only keyframes are stored, and each patch of space is stored once.
+- RTAB-Map also moves old parts of the map to disk so updates stay fast.
+- Position errors build up between loop closures. When one fires, the keyframe positions are corrected and the map is rebuilt from the saved per-keyframe depth.
+
+Measured end to end: optical-flow tracking plus half-resolution depth on every 3rd frame ran at 20–25 ms per frame, steadily. That fits inside a 30 fps camera's budget. ORB-based tracking took 30–80 ms and jumped around. On this CPU, the choice of tracking method matters more than the stereo algorithm.
+
+Capture: where most of the accuracy is won or lost
+
+- Sync. If the rig turns while the two cameras capture at slightly different times, the images no longer line up.
+  - At 30°/s and a 16.7 ms gap, the shift is about 4 pixels. That's roughly 15% depth error at 2 m.
+  - Fixes, cheapest first:
+    i. Use 60 fps if the webcams offer it at 640×480. That halves the worst-case gap.
+    ii. Read each frame's kernel timestamp (CAP_PROP_POS_MSEC). Only add a pair to the map when the expected shift is under about 0.5–1 pixel; use the other pairs for tracking only.
+    iii. Undo the rotation by warping the later image before matching. This is my suggestion and I haven't tested it.
+    iv. Fix it in hardware with a synchronized dual-lens USB module (ELP, about $75–85). Note its camera spacing is often only about 6 cm, which shortens the useful range.
+- USB bandwidth. Webcams often reserve a large chunk of USB bandwidth even when sending compressed video. Two on the same controller can make the second fail with No space left on device.
+  - Put one camera in a USB-A port and the other in a USB-C port.
+  - Check with lsusb -t that they show different "Bus" numbers.
+  - Use MJPEG at 640×480.
+- Lock the camera settings, the same on both cameras:
+  - manual exposure of 8–10 ms or less (less motion blur), with fixed gain;
+  - auto white balance off;
+  - autofocus off, because refocusing changes the lens geometry and breaks calibration;
+  - dynamic frame rate off;
+  - power-line frequency set to 60 Hz.
+
+  The tool for this isn't installed yet: sudo apt install v4l-utils, then v4l2-ctl -l lists the setting names.
+- Device names. Open the cameras by /dev/v4l/by-id/... so left and right never swap; your built-in camera already uses /dev/video0–3. Don't pair the built-in lid camera with an external one, because the hinge isn't rigid.
+- Capture code:
+  - Open with cv2.CAP_V4L2 and set the format to MJPG before setting size and fps.
+  - Use one thread per camera that keeps only the newest frame. On Linux, OpenCV's grab() hands back the oldest buffered frame.
+  - Decode with cv2.imdecode(buf, cv2.IMREAD_GRAYSCALE), about 1 ms.
+- Calibration:
+  - Mount both cameras on a rigid bar, 10–15 cm apart.
+  - Use a ChArUco board and take 20–40 pairs with the board held still, covering the image corners and tilted up to ±45°.
+  - Aim for about 0.5 pixel average error per camera or better. Then run stereoCalibrate with each camera's own calibration fixed, and check that rectified rows line up within 0.5 pixel.
+  - OpenCV 5 removed calibrateCameraCharuco (I confirmed this); use CharucoDetector, then matchImagePoints, then calibrateCamera.
+  - If the bar flexes by even 0.1°, depth at 2 m is about 3% off, so recalibrate after any knock.
+
+Expected depth error at 640×480 with 10–15 cm camera spacing:
+
+┌──────────┬────────────┬────────────┬─────────┬──────────┐
+│ Distance │    1 m     │    2 m     │   3 m   │   5 m    │
+├──────────┼────────────┼────────────┼─────────┼──────────┤
+│ Error    │ 0.6–1.3 cm │ 2.4–5.1 cm │ 5–11 cm │ 15–32 cm │
+└──────────┴────────────┴────────────┴─────────┴──────────┘
+
+So limit the map to about 4 m from the cameras.
+
+Depth: what to run
+
+Use OpenCV's StereoSGBM in MODE_SGBM_3WAY with cv2.setNumThreads(4). Eight threads was slower (44 ms vs 32 ms) because hyper-threads compete for the same cores. The default SGBM mode is 3–4 times slower.
+
+┌──────────────────────────────┬───────────────┬──────────────────────────┐
+│   Setting (12 cm spacing)    │ Time per pair │ Closest depth it can see │
+├──────────────────────────────┼───────────────┼──────────────────────────┤
+│ 320×240, 64 disparity levels │ about 8 ms    │ 0.43 m                   │
+├──────────────────────────────┼───────────────┼──────────────────────────┤
+│ 640×480, 96 levels           │ about 26 ms   │ 0.57 m                   │
+├──────────────────────────────┼───────────────┼──────────────────────────┤
+│ 640×480, 128 levels          │ 33–54 ms      │ 0.43 m                   │
+├──────────────────────────────┼───────────────┼──────────────────────────┤
+│ 1280×720                     │ 120–225 ms    │ too slow                 │
+└──────────────────────────────┴───────────────┴──────────────────────────┘
+
+- Half resolution with 64 levels sees as close as full resolution with 128, for roughly a quarter to a sixth of the cost. Its error doubles to about 5–10 cm at 2 m, which is fine for an obstacle map. Use 640×480 with 96 levels on keyframes if you want a nicer mesh.
+- StereoBM is 2–3 times faster at 640×480 but leaves many more holes on blank surfaces.
+- WLS filter (hole filling, in opencv-contrib-python): took 81 ms per frame, so use it on keyframes only.
+- Learned stereo networks take 0.15–1.5 s per frame even on an 8-core desktop. The newest efficient ones (LAS2-S, LightStereo-S) would take an estimated 0.08–0.25 s at 320×240 here, so at most an occasional keyframe.
+- Single-camera depth models (such as Depth Anything) take 0.25–1 s or more per frame here, and their scale wobbles. Stereo already gives true scale, so use them at most to fill holes on blank walls.
+- The built-in Intel graphics is only supported by Intel's frozen legacy driver and would add little. Plan for CPU only.
+
+Tracking and mapping software
+
+┌───────────────────────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                  Option                   │                                                       Fit for your laptop                                                        │
+├───────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│                                           │ Best overall. Tracking from the stereo pair, drift correction, automatic memory management, a 5 cm 2D obstacle map, optional 3D  │
+│ RTAB-Map 0.23 (ros-lyrical-rtabmap-ros)   │ occupancy map, and a navigate-only mode. BSD licence. It can open two separate USB cameras as a pair, and its ROS package is     │
+│                                           │ described as including the standalone app.                                                                                       │
+├───────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ORB-SLAM3                                 │ Most accurate tracker, but GPL-licensed, not updated upstream since 2024, built from source, and produces only a sparse map. Its │
+│                                           │  feature extraction alone costs 30–40 ms per frame here.                                                                         │
+├───────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Stella-VSLAM / Basalt                     │ Stella is a BSD-licensed alternative to ORB-SLAM3. Basalt is the lightest option but has no drift correction.                    │
+├───────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ pySLAM                                    │ Good for learning, not built for real time. Needs Python 3.11; GPL.                                                              │
+├───────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ DROID-SLAM, MASt3R-SLAM, VGGT,            │ Need NVIDIA GPUs with 5–40+ GB of memory. Offline only.                                                                          │
+│ Gaussian-splat SLAM, NVIDIA cuVSLAM       │                                                                                                                                  │
+└───────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+RTAB-Map settings that matter on your CPU (I checked these names in its source):
+- Tracking: Odom/Strategy=1 (frame-to-frame) with Vis/CorType=1 (optical flow, the cheap option measured above). Use Vis/MaxFeatures of 500–1000. If it's still slow, set Odom/ImageDecimation=2.
+- Obstacle map:
+  - Stereo/DenseStrategy=1 (SGBM, which defaults to the fast 3WAY mode);
+  - Grid/CellSize=0.05, Grid/RangeMax=4;
+  - Grid/RayTracing=true, which marks free space; the planner needs it;
+  - Grid/MaxObstacleHeight set to your body or robot height.
+- Map updates: keep the defaults (drift correction once per second, new map entries every 0.1 m or 0.1 rad of motion).
+- For navigating: Mem/IncrementalMemory=false uses the saved map without changing it.
+
+What the "3D model" should store
+
+- Navigation needs to know what's free, what's blocked and what's unseen; a pretty mesh doesn't help it. Keep:
+  - the keyframe positions;
+  - each keyframe's depth, so the map can be rebuilt after drift corrections;
+  - a 2D obstacle grid at 5–10 cm cells, which is what the planner reads.
+- Optional 3D mesh for viewing and for clicking a destination: OpenCV 5's built-in TSDF (very cheap, as measured above) or open3d-cpu 0.20. Open3D has Python 3.14 wheels; reserve 10–20k blocks, about 0.3–0.6 GB without colour.
+- A 3D occupancy map (OctoMap) is only needed for overhangs or a drone, and it's expensive to update.
+- Gaussian splats and NeRFs look great, but they don't record free space and they need a GPU.
+- Finding "up" without a motion sensor: fit the floor plane in the first keyframes (Open3D segment_plane) and rotate the map so the floor sits at height zero. Both the 2D map and "turn left/right" depend on this.
+
+Part 2: From a destination point to directions
+
+1. Turn the click into a goal.
+- Cast a ray from the click into the mesh (Open3D RaycastingScene), or simply intersect it with the floor plane.
+- Viewer options:
+  - Viser, which runs in the browser and doesn't freeze your program;
+  - Open3D's point-picking window, which does freeze it while open;
+  - RViz2's "2D Goal Pose" tool, if you're using ROS.
+- Snap the goal to the nearest reachable cell (about 26 ms). Planners fail on goals inside walls or unseen space.
+- If the goal can't be reached, guide to the closest reachable point and say how far away the goal is.
+- Spoken goals like "go to the door":
+  - Full open-vocabulary 3D scene maps (ConceptGraphs, HOV-SG) are far beyond this laptop.
+  - The affordable version: run a small object detector (YOLO-World or YOLOE, via OpenVINO) on keyframes and place what it finds using stereo depth. Estimated 50–150 ms per keyframe.
+
+2. Build the planning map.
+- Grid: one 10 cm grid for the whole floor, plus a finer 5 cm window around you.
+- What counts as an obstacle: anything between step height and body height. That's about 0.10–1.9 m for a person and 0.03–0.4 m for a small robot.
+- Inflation: grow obstacles by your body radius, with a cost that fades with distance so routes keep clear of walls. About 20 ms for a 60×40 m floor.
+- Unseen cells: stereo leaves holes on glass and blank walls. Treat unseen space as blocked within about 2 m of you, and as passable with a penalty beyond that.
+- Stairs: a jump in floor height of more than about 0.12 m between neighbouring cells. Announce it to a person; block it for a robot.
+
+3. Plan the route. Measured on a 60×40 m floor at 10 cm cells, with code compiled by numba:
+
+┌─────────────────────────────────────┬────────────────────────────────────────────────────────────────────────────────────────┬───────────────────────────────────────────────┐
+│               Method                │                                          Cost                                          │                    Verdict                    │
+├─────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┼───────────────────────────────────────────────┤
+│ Cost map rooted at the goal         │ about 59 ms when the goal or map changes; then about 15 µs to get the route from any   │ Best, because re-routing is automatic         │
+│ (Dijkstra)                          │ position                                                                               │                                               │
+├─────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┼───────────────────────────────────────────────┤
+│ A*                                  │ about 79 ms per route                                                                  │ Fine. Plain-Python A* is about 10 times       │
+│                                     │                                                                                        │ slower                                        │
+├─────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┼───────────────────────────────────────────────┤
+│ D* Lite                             │ cheaper re-planning when the map keeps changing                                        │ Only worth it above about a million cells     │
+├─────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┼───────────────────────────────────────────────┤
+│ Jump Point Search                   │ about 10 times faster than A*                                                          │ Doesn't work with wall-clearance costs        │
+├─────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────┼───────────────────────────────────────────────┤
+│ RRT*, PRM, Hybrid-A*                │ —                                                                                      │ Overkill in 2D; Hybrid-A* is for car-like     │
+│                                     │                                                                                        │ robots                                        │
+└─────────────────────────────────────┴────────────────────────────────────────────────────────────────────────────────────────┴───────────────────────────────────────────────┘
+
+- Smoothing: straighten the route wherever there's a clear line of sight, then simplify it to a few waypoints (Ramer–Douglas–Peucker, about 0.25 m tolerance). Merge legs shorter than 1 m.
+- For a robot, Nav2 is the standard design to copy (version 1.5.3 on ROS 2 Lyrical):
+  - it re-plans once per second;
+  - Regulated Pure Pursuit is its cheapest steering controller;
+  - it counts the goal as reached within 0.25 m;
+  - when stuck, it clears the map, spins, waits, then backs up.
+
+4. Turn the route into words.
+- Heading: take the cameras' forward direction, flattened onto the floor. Turn angle = direction to the next waypoint minus heading; positive means left.
+- Turn categories used by real routing engines (degrees away from straight ahead):
+
+┌──────────────────────────────────────┬───────────┬───────────┬────────────┬───────────┬───────────────┐
+│                Engine                │ Straight  │  Slight   │    Turn    │   Sharp   │    U-turn     │
+├──────────────────────────────────────┼───────────┼───────────┼────────────┼───────────┼───────────────┤
+│ OSRM                                 │ up to 20° │ 20–40°    │ 40–120°    │ over 120° │ 180°          │
+├──────────────────────────────────────┼───────────┼───────────┼────────────┼───────────┼───────────────┤
+│ Valhalla                             │ up to 10° │ 11–44°    │ 45–135°    │ 136–159°  │ 160° and over │
+├──────────────────────────────────────┼───────────┼───────────┼────────────┼───────────┼───────────────┤
+│ GraphHopper                          │ under 11° │ under 46° │ under 103° │ beyond    │ —             │
+├──────────────────────────────────────┼───────────┼───────────┼────────────┼───────────┼───────────────┤
+│ NavCog3 (indoor app for blind users) │ —         │ 22.5–60°  │ 60–120°    │ over 120° │ —             │
+└──────────────────────────────────────┴───────────┴───────────┴────────────┴───────────┴───────────────┘
+
+  For walking I'd start with breaks at 20°, 45°, 120° and 160°. Add a ±5° margin so instructions don't flip back and forth near a boundary.
+- When to speak:
+  - "In 5 meters, turn left" about 5 m before the turn, then "Turn left now" at about 1.5 m.
+  - Add "then…" when the next turn follows closely.
+  - Leave at least 2 s between messages, and always let safety warnings go first.
+- Landmarks ("after the door, turn left") work better than distances for people on foot, if you detect objects.
+- For blind users:
+  - Clock directions work well ("door at 2 o'clock").
+  - People over-rotate by about 17° on average, so beep while they turn until they're within about 10°.
+  - Wear the rig on the chest: every instruction is relative to where the cameras point.
+- Output:
+  - Speech: espeak-ng uses almost no CPU, and Piper sounds nicer. Pre-record the fixed phrases.
+  - Or draw the route over the live camera image with cv2.projectPoints, about 30 µs for 200 points.
+
+5. Keep the directions up to date while moving (a loop running 10 times a second):
+
+on goal chosen:  goal = snap_to_reachable(goal);  field = dijkstra_from(goal)   # ~60 ms, background thread
+every 100 ms:
+    pose = slam.pose()
+    if tracking lost:  say("Stop and turn slowly"); continue        # wait until it relocalizes
+    path = descend(field, pose)                   # microseconds, so re-routing is automatic
+    s = progress_along(path, pose)                # only allowed to move forward
+    if map changed on the remaining path:  recompute field          # at most once per second
+    if > 1 m off route for ≥ 1 s:  say("Re-routing")                # cleared once back within 0.5 m
+    m = next_maneuver(path, s);  angle = wrap(bearing(m) - heading(pose))
+    announce m when its distance crosses 5 m and 1.5 m             # with hysteresis, ≥ 2 s apart
+    if within 0.5 m of goal:  say("You have arrived"); stop
+
+- Robot version: use the same cost map with simple steering 20 times a second, at up to 0.3 m/s. If tracking is lost, stop. To recover, clear the map, spin slowly (which also helps it recognize where it is), wait, then back up.
+- Cost: planning uses under about 6% of one core even if the cost map is rebuilt every second, and guidance takes microseconds per update. The CPU stays free for the vision work.
+- Lesson from navigation aids for blind users: position errors of a few meters send people to the wrong door. Accurate drift correction matters more than a clever planner.
+
+Recommended plan for your laptop
+
+1. Fastest to a working system, and most efficient:
+   - Install ROS 2 Lyrical (officially supported on Ubuntu 26.04, uses your Python 3.14) and ros-lyrical-rtabmap-ros.
+   - Map with the two cameras using the settings above, save the map, then switch RTAB-Map to navigate-only mode.
+   - A small Python program reads RTAB-Map's position and obstacle map and runs the cost map, guidance and espeak-ng.
+   - For a robot, use Nav2 instead of your own program.
+2. Fully custom in Python, if you want to own the internals:
+   - Use opencv-contrib-python 5.0, numba and open3d-cpu 0.20; all have Python 3.14 wheels.
+   - Chain: optical-flow tracking → SGBM depth on keyframes → TSDF plus 2D grid → cost map → guidance.
+   - What's missing is drift correction. That's fine for one room but will drift over a whole building; it can be added later.
+3. Best-looking model: record the camera pairs and process them offline on a rented GPU (DROID-SLAM in stereo mode, MapAnything, or VGGT-Long). Build the navigation grid from that result, and keep RTAB-Map for live positioning.
+
+Two highest-payoff changes:
+- Run on AC power with powerprofilesctl set performance. Every number above was capped at about 1.9 GHz on battery.
+- If depth quality disappoints, a synchronized dual-lens USB module (about $80) fixes the sync problem better than any software workaround.
+
+Not checked:
+- Your webcams weren't plugged in, so I couldn't see what modes they support. Once they're connected, v4l2-ctl --list-formats-ext shows whether they offer 60 fps and fixed focus.
+- Whether a person or a robot carries the rig only changes step 5.
+

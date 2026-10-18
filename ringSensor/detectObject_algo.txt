@@ -1,0 +1,15 @@
+This is a prompt for the algorithm detectObject.
+
+Read first BLACKBOX_DESIGN_PROMPT.txt and make sure the algorithm detectObject follows that format. I want you to also at the end give me a short very elaborated PDF explaining the inputs (and why you chose them) and the outputs (and why you chose them).
+
+Make sure your algorithm (in python) is perfectly compatible both with linux and mac. you will be working on linux right now, but the algorithm should work perfectly on mac. 
+
+The setup that we are using is two webcams connected via usb to a laptop. 
+The inputs of the algorithm should be the constant data transfer of the two cameras, and some variables that you will let me know if you need them (such as angle between the webcams, distance between them, etc). The algorithm should, using all the inputs, focus a region that is convinient (you should decide this by now, but leave it open as a parameter so i can change it later easily, include details of the pdf) and detect which objects are in that window. 
+
+The algorithm should also include a parameter that control how much detail the algorithm will process on the objects. For example, if I'm in a conference room, different levels of detail could be:
+the lowest: conference room
+middle: conference room, 60 seats, one projector, etc
+highest: conference room, 60 seats, daylight, one projector, two speakers, one hole trip at the front.
+
+Make sure this detail parameter works also as a good mathematical model with clear input and output, because this will connect in the future to other algorithms.

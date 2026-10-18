@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>detectObject viewer</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --ink: #1c2230; --muted: #667085; --line: #e2e5ea;
+    --accent: #2f5d8a; --accent-ink: #ffffff; --ok: #2e8b57; --warn: #b7791f; --bad: #c0392b;
+    --chip: #eef2f6; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1a1f27; --ink: #e6e9ef; --muted: #98a2b3; --line: #2a313c;
+      --accent: #6aa1d8; --accent-ink: #0d1117; --chip: #232a35;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 12px 20px;
+           border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { font-size: 16px; margin: 0; font-weight: 650; }
+  .status { margin-left: auto; display: flex; align-items: center; gap: 8px; color: var(--muted); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .dot.running { background: var(--ok); } .dot.error { background: var(--bad); }
+  .dot.busy { background: var(--warn); }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; padding: 16px 20px; }
+  @media (max-width: 1100px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .panel + .panel { margin-top: 16px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted);
+       margin: 0 0 10px; font-weight: 650; }
+  .video { background: #000; border-radius: 8px; aspect-ratio: 8 / 3; display: grid; place-items: center;
+           overflow: hidden; color: #9aa4b2; }
+  .video img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 8px; color: var(--muted); font-size: 12px; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+                         margin-right: 6px; vertical-align: -1px; background: var(--c); }
+  .summary { font-size: 19px; font-weight: 550; margin: 0 0 8px; min-height: 28px; }
+  .stats { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { background: var(--chip); border-radius: 999px; padding: 2px 10px; font-size: 12px; }
+  .chip b { font-weight: 650; }
+  .warn { color: var(--warn); margin-top: 8px; font-size: 13px; }
+  .warnText { color: var(--warn); }
+  .err { color: var(--bad); margin-top: 8px; font-size: 13px; white-space: pre-wrap; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  td.num { font-family: var(--mono); font-size: 12px; text-align: right; white-space: nowrap; }
+  tr.dim td { color: var(--muted); }
+  .kind { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--chip); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; }
+  label { display: block; font-size: 12px; color: var(--muted); }
+  input[type=number], input[type=text], select { width: 100%; padding: 6px 8px; border: 1px solid var(--line);
+       border-radius: 6px; background: var(--bg); color: var(--ink); font: inherit; margin-top: 2px; }
+  .check { display: flex; align-items: center; gap: 6px; color: var(--ink); font-size: 13px; }
+  .row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  button { border: 1px solid var(--line); background: var(--chip); color: var(--ink); border-radius: 6px;
+           padding: 6px 12px; font: inherit; cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  .slider { display: flex; align-items: center; gap: 10px; }
+  .slider input { flex: 1; accent-color: var(--accent); }
+  .slider output { font-family: var(--mono); width: 40px; text-align: right; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .tables { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+  @media (max-width: 800px) { .tables { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>detectObject viewer</h1>
+  <div class="status"><span class="dot" id="dot"></span><span id="status">idle</span></div>
+</header>
+
+<main>
+  <section>
+    <div class="panel">
+      <div class="video" id="video"><span id="placeholder">Pick the two cameras on the right and press Start.</span></div>
+      <div class="legend">
+        <span style="--c:#5adc5a">seen by both cameras (has distance)</span>
+        <span style="--c:#ffaa3c">seen by one camera</span>
+        <span style="--c:#ff3c3c">trip hazard</span>
+        <span style="--c:#969696">outside focus region</span>
+        <span style="--c:#ffd700">focus region (drawn at 5 m)</span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Report</h2>
+      <p class="summary" id="summary">—</p>
+      <div class="stats" id="stats"></div>
+      <div class="warn" id="warnings"></div>
+      <div class="err" id="error"></div>
+    </div>
+
+    <div class="tables">
+      <div class="panel">
+        <h2>Facts (selected by detail level)</h2>
+        <table><thead><tr><th>kind</th><th>fact</th><th class="num">rank</th><th class="num">sal.</th><th class="num">conf.</th></tr></thead>
+          <tbody id="facts"></tbody></table>
+      </div>
+      <div class="panel">
+        <h2>All fused objects this frame</h2>
+        <table><thead><tr><th>label</th><th>seen</th><th class="num">dist</th><th class="num">yaw</th><th class="num">pitch</th></tr></thead>
+          <tbody id="objects"></tbody></table>
+      </div>
+    </div>
+  </section>
+
+  <aside>
+    <div class="panel">
+      <h2>Cameras</h2>
+      <div class="grid2">
+        <div><label>Left camera<select id="left"></select></label></div>
+        <div><label>Right camera<select id="right"></select></label></div>
+        <div><label>Resolution<select id="res">
+          <option value="640x480" selected>640 × 480</option>
+          <option value="800x600">800 × 600</option>
+          <option value="1280x720">1280 × 720</option>
+        </select></label></div>
+        <div><label>FPS<input id="fps" type="number" value="30" min="1" max="60"></label></div>
+      </div>
+      <div class="row">
+        <button class="primary" id="start">Start</button>
+        <button id="stop" disabled>Stop</button>
+        <button id="swap" title="Swap left and right, then restart">Swap L/R</button>
+        <button id="refresh">Refresh list</button>
+      </div>
+      <p class="hint" id="camInfo">Looking for cameras…</p>
+      <p class="hint">Identical webcams are told apart by the adapter port they are plugged into.
+        If the left view shows what the right camera sees, press Swap.</p>
+    </div>
+
+    <div class="panel">
+      <h2>Detail level λ</h2>
+      <div class="slider"><input id="detail" type="range" min="0" max="1" step="0.05" value="0.5"><output id="detailOut">0.50</output></div>
+      <div class="row">
+        <button data-detail="0">Low</button><button data-detail="0.5">Medium</button>
+        <button data-detail="0.75">0.75</button><button data-detail="1">High</button>
+      </div>
+      <p class="hint">Applied live. 0 = scene only · 0.5 = + main object counts · ≥ 0.6 hazards ·
+        ≥ 0.65 lighting · ≥ 0.85 object locations.</p>
+      <div class="row">
+        <input id="droidAsk" type="text" maxlength="500" placeholder="Ask Droid, e.g. “more detail” or “just the basics”" style="flex: 1; min-width: 0">
+        <button id="droidGo">Ask Droid</button>
+      </div>
+      <p class="hint" id="droidOut">Droid sets λ from what you ask (needs the droid CLI and FACTORY_API_KEY).</p>
+    </div>
+
+    <div class="panel">
+      <h2>Rig (how the cameras are mounted)</h2>
+      <div class="grid2">
+        <div><label>Baseline, lens to lens (m)<input id="baseline_m" type="number" step="0.005" min="0.01"></label></div>
+        <div><label>Angle between axes (°, + = toed in)<input id="convergence_deg" type="number" step="0.5"></label></div>
+        <div><label>Tilt (°, + = looking down)<input id="pitch_deg" type="number" step="0.5"></label></div>
+        <div><label>Height above floor (m, blank = unknown)<input id="height_m" type="number" step="0.05" min="0"></label></div>
+        <div><label>Left HFOV (°)<input id="hfov_l" type="number" step="1" min="20" max="140"></label></div>
+        <div><label>Right HFOV (°)<input id="hfov_r" type="number" step="1" min="20" max="140"></label></div>
+      </div>
+      <div class="row"><button class="primary" id="applyRig">Apply rig</button></div>
+    </div>
+
+    <div class="panel">
+      <h2>Focus region</h2>
+      <div class="grid2">
+        <div><label>Yaw min (°)<input id="yaw_min_deg" type="number" step="1"></label></div>
+        <div><label>Yaw max (°)<input id="yaw_max_deg" type="number" step="1"></label></div>
+        <div><label>Pitch min (°)<input id="pitch_min_deg" type="number" step="1"></label></div>
+        <div><label>Pitch max (°)<input id="pitch_max_deg" type="number" step="1"></label></div>
+        <div><label>Near (m)<input id="near_m" type="number" step="0.1" min="0"></label></div>
+        <div><label>Far (m)<input id="far_m" type="number" step="0.5" min="0.1"></label></div>
+        <label class="check"><input id="clip_to_overlap" type="checkbox"> clip to stereo overlap</label>
+        <label class="check"><input id="require_stereo" type="checkbox"> both cameras required</label>
+      </div>
+      <div class="row"><button class="primary" id="applyFocus">Apply focus</button>
+        <button id="resetFocus">Default</button></div>
+      <p class="hint" id="effFocus"></p>
+    </div>
+
+    <div class="panel">
+      <h2>Export</h2>
+      <div class="row"><a href="/api/report.json" target="_blank"><button>Latest report (JSON)</button></a>
+        <button id="copyCfg">Copy config JSON</button></div>
+    </div>
+  </aside>
+</main>
+
+<div id="offline" hidden style="position:fixed;inset:0;background:var(--bg);display:grid;place-items:center;padding:24px;z-index:10">
+  <div class="panel" style="max-width:640px">
+    <h2>The detectObject server is not running</h2>
+    <p>This page is only the screen. The cameras and the detection algorithm run in a small Python
+       server on this computer, and a browser cannot reach USB cameras on its own. Start it once with:</p>
+    <pre style="background:var(--chip);padding:10px 12px;border-radius:6px;overflow:auto">cd ~/Documents/claude-projects/ringSensor
+.venv/bin/python start_viewer.py</pre>
+    <p class="hint">It opens this page by itself at http://127.0.0.1:8765. This page keeps checking and
+       switches over as soon as the server is up.</p>
+  </div>
+</div>
+
+<script>
+// Opened straight from disk (file://): hand over to the server's copy of this page once it is running.
+if (location.protocol === "file:") {
+  const SERVER = "http://127.0.0.1:8765/";
+  document.getElementById("offline").hidden = false;
+  const probe = () => fetch(SERVER + "api/state", {mode: "no-cors", cache: "no-store"})
+    .then(() => location.replace(SERVER)).catch(() => setTimeout(probe, 1500));
+  probe();
+  throw new Error("waiting for server");     // stop the rest of this script in file:// mode
+}
+
+const $ = (id) => document.getElementById(id);
+let state = null, formLoaded = false, streaming = false;
+
+async function api(path, body) {
+  const opt = body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"},
+                                          body: JSON.stringify(body)};
+  const r = await fetch(path, opt);
+  const j = await r.json();
+  if (!r.ok || j.ok === false) throw new Error(j.error || r.statusText);
+  return j;
+}
+function showError(e) { $("error").textContent = e ? String(e.message || e) : ""; }
+
+// Cameras: option values are stable keys (USB port on Linux); `cameraIndex` maps a key to
+// the number OpenCV opens. Indices change on replug, keys do not.
+let cameraIndex = {}, cameraSig = "", platform = "";
+const userPicked = () => $("left").dataset.touched === "1";
+
+async function loadCameras() {
+  const res = await api("/api/cameras");
+  const cameras = res.cameras;
+  platform = res.platform;
+  const sig = JSON.stringify(cameras);
+  if (sig !== cameraSig) {
+    cameraSig = sig;
+    cameraIndex = Object.fromEntries(cameras.map(c => [c.key, c.index]));
+    for (const id of ["left", "right"]) {
+      const sel = $(id), keep = sel.value;
+      sel.innerHTML = "";
+      for (const c of cameras) {
+        const o = document.createElement("option");
+        o.value = c.key; o.textContent = c.name;
+        sel.appendChild(o);
+      }
+      if (keep in cameraIndex) sel.value = keep;
+    }
+    const ext = cameras.filter(c => !c.builtin);
+    const missing = !($("left").value in cameraIndex) || !($("right").value in cameraIndex);
+    if (ext.length >= 2 && (!userPicked() || missing || $("left").value === $("right").value)) {
+      $("left").value = ext[0].key; $("right").value = ext[1].key;
+    }
+  }
+  const ext = cameras.filter(c => !c.builtin).length;
+  $("camInfo").textContent = `${ext} USB camera${ext === 1 ? "" : "s"} found` +
+    (cameras.length > ext ? ` (+ ${cameras.length - ext} built-in)` : "") +
+    (ext < 2 ? " — plug in both webcams; this list updates by itself." : ".");
+  $("camInfo").className = ext < 2 ? "hint warnText" : "hint";
+}
+
+// Linux lists cameras without opening them, so it is safe to re-scan while idle.
+// macOS has to open each camera to list it, so it only re-scans on "Refresh list".
+async function watchCameras() {
+  if (platform !== "darwin" && !(state && state.running)) await loadCameras().catch(() => {});
+  setTimeout(watchCameras, 2000);
+}
+
+function fillForm(cfg) {
+  const r = cfg.rig, f = cfg.focus;
+  $("baseline_m").value = r.baseline_m; $("convergence_deg").value = r.convergence_deg;
+  $("pitch_deg").value = r.pitch_deg; $("height_m").value = r.height_m ?? "";
+  $("hfov_l").value = r.left.hfov_deg; $("hfov_r").value = r.right.hfov_deg;
+  for (const k of ["yaw_min_deg", "yaw_max_deg", "pitch_min_deg", "pitch_max_deg", "near_m", "far_m"]) $(k).value = f[k];
+  $("clip_to_overlap").checked = f.clip_to_overlap; $("require_stereo").checked = f.require_stereo;
+  $("detail").value = cfg.detail; $("detailOut").value = Number(cfg.detail).toFixed(2);
+}
+
+function rigFromForm() {
+  const r = structuredClone(state.config.rig), num = (id) => parseFloat($(id).value);
+  r.baseline_m = num("baseline_m"); r.convergence_deg = num("convergence_deg"); r.pitch_deg = num("pitch_deg");
+  r.height_m = $("height_m").value === "" ? null : num("height_m");
+  r.left.hfov_deg = num("hfov_l"); r.right.hfov_deg = num("hfov_r");
+  return r;
+}
+function focusFromForm() {
+  const f = {};
+  for (const k of ["yaw_min_deg", "yaw_max_deg", "pitch_min_deg", "pitch_max_deg", "near_m", "far_m"]) f[k] = parseFloat($(k).value);
+  f.clip_to_overlap = $("clip_to_overlap").checked; f.require_stereo = $("require_stereo").checked;
+  return f;
+}
+
+function setStream(on) {
+  if (on === streaming) return;
+  streaming = on;
+  const v = $("video");
+  v.innerHTML = on ? `<img src="/stream.mjpg?t=${Date.now()}" alt="Left and right camera views with detections">`
+                   : `<span>Pick the two cameras on the right and press Start.</span>`;
+}
+
+const esc = (s) => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const fmt = (x, d = 2) => x === null || x === undefined ? "—" : Number(x).toFixed(d);
+
+function render(s) {
+  state = s;
+  if (!formLoaded) { fillForm(s.config); formLoaded = true; }
+  const st = s.status, dot = $("dot");
+  dot.className = "dot " + (st === "running" ? "running" : st === "error" ? "error" : st === "idle" ? "" : "busy");
+  $("status").textContent = st + (st === "running" ? ` · ${fmt(s.fps, 1)} fps` : "");
+  $("start").disabled = s.running; $("stop").disabled = !s.running;
+  setStream(s.running && st === "running");
+  if (s.error) $("error").textContent = s.error;
+
+  const e = s.effective_focus;
+  $("effFocus").textContent = e ? `Effective: yaw ${fmt(e.yaw_min_deg, 1)}° … ${fmt(e.yaw_max_deg, 1)}°, ` +
+    `pitch ${fmt(e.pitch_min_deg, 1)}° … ${fmt(e.pitch_max_deg, 1)}°, ${fmt(e.near_m)} … ${fmt(e.far_m, 1)} m` : "";
+
+  const r = s.report;
+  if (!r) return;
+  $("summary").textContent = r.summary || "—";
+  const p = r.plan;
+  const stages = [p.run_hazards && "hazards", p.run_lighting && "lighting", p.run_locations && "locations"].filter(Boolean);
+  $("stats").innerHTML = [
+    ["scene", `${esc(r.scene)} (${fmt(r.scene_confidence)})`], ["λ", fmt(r.detail)],
+    ["latency", `${fmt(r.latency_ms, 0)} ms`], ["skew", `${fmt(r.skew_ms, 0)} ms`],
+    ["detector", `${p.imgsz} px`], ["stages", stages.length ? stages.join(", ") : "base only"],
+  ].map(([k, v]) => `<span class="chip">${k} <b>${v}</b></span>`).join("");
+  $("warnings").textContent = r.warnings.length ? "⚠ " + r.warnings.join(" · ") : "";
+  $("facts").innerHTML = r.facts.map(f =>
+    `<tr><td><span class="kind">${f.kind}</span></td><td>${esc(f.text)}</td>` +
+    `<td class="num">${fmt(f.rank)}</td><td class="num">${fmt(f.salience)}</td><td class="num">${fmt(f.confidence)}</td></tr>`).join("");
+  $("objects").innerHTML = r.all_objects.map(o =>
+    `<tr class="${o.in_focus ? "" : "dim"}"><td>${esc(o.label)}</td><td>${o.seen_by}</td>` +
+    `<td class="num">${o.distance_m === null ? "—" : fmt(o.distance_m) + " m"}</td>` +
+    `<td class="num">${fmt(o.yaw_deg, 1)}°</td><td class="num">${fmt(o.pitch_deg, 1)}°</td></tr>`).join("")
+    || `<tr class="dim"><td colspan="5">no detections</td></tr>`;
+}
+
+async function poll() {
+  try { render(await api("/api/state")); $("offline").hidden = true; }
+  catch (e) { $("status").textContent = "server not reachable"; $("offline").hidden = false; }
+  setTimeout(poll, 400);
+}
+
+async function start() {
+  showError("");
+  const [w, h] = $("res").value.split("x").map(Number);
+  const L = cameraIndex[$("left").value], R = cameraIndex[$("right").value];
+  if (L === undefined || R === undefined) { showError("Pick two cameras first."); return; }
+  if (L === R) { showError("Left and right must be different cameras."); return; }
+  try {
+    await api("/api/config", {rig: rigFromForm(), focus: focusFromForm(), detail: parseFloat($("detail").value)});
+    await api("/api/start", {left: L, right: R, width: w, height: h, fps: parseInt($("fps").value)});
+  } catch (e) { showError(e); }
+}
+
+$("start").onclick = start;
+$("stop").onclick = async () => { await api("/api/stop", {}); setStream(false); };
+$("swap").onclick = async () => {
+  const l = $("left").value; $("left").value = $("right").value; $("right").value = l;
+  $("left").dataset.touched = "1";
+  if (state && state.running) { await api("/api/stop", {}); setStream(false); await start(); }
+};
+$("refresh").onclick = () => loadCameras().catch(showError);
+for (const id of ["left", "right"]) $(id).onchange = () => { $("left").dataset.touched = "1"; };
+
+let detailTimer = null;
+function sendDetail(v) {
+  $("detail").value = v; $("detailOut").value = Number(v).toFixed(2);
+  clearTimeout(detailTimer);
+  detailTimer = setTimeout(() => api("/api/config", {detail: Number(v)}).catch(showError), 120);
+}
+$("detail").oninput = (e) => sendDetail(e.target.value);
+
+// Droid reads the request and picks λ; the server checks the value and applies it like the slider.
+async function askDroid() {
+  const q = $("droidAsk").value.trim();
+  if (!q) return;
+  $("droidGo").disabled = true;
+  $("droidOut").textContent = "Droid is thinking…";
+  try {
+    const r = await fetch("/api/detail-request", {method: "POST", headers: {"Content-Type": "application/json"},
+                                                    body: JSON.stringify({request: q})}).then((x) => x.json());
+    if (!r.ok) { $("droidOut").textContent = `λ unchanged: ${r.error}`; return; }
+    if (r.changed) { $("detail").value = r.level; $("detailOut").value = Number(r.level).toFixed(2); }
+    $("droidOut").textContent = (r.reply || (r.changed ? "Done." : "No change.")) + ` (λ = ${Number(r.level).toFixed(2)})`;
+    $("droidAsk").value = "";
+  } catch (e) { $("droidOut").textContent = `λ unchanged: ${e.message || e}`; }
+  finally { $("droidGo").disabled = false; }
+}
+$("droidGo").onclick = askDroid;
+$("droidAsk").onkeydown = (e) => { if (e.key === "Enter") askDroid(); };
+document.querySelectorAll("[data-detail]").forEach(b => b.onclick = () => sendDetail(b.dataset.detail));
+$("applyRig").onclick = () => api("/api/config", {rig: rigFromForm()}).then(() => showError("")).catch(showError);
+$("applyFocus").onclick = () => api("/api/config", {focus: focusFromForm()}).then(() => showError("")).catch(showError);
+$("resetFocus").onclick = () => {
+  fillForm({rig: state.config.rig, detail: state.config.detail,
+            focus: {yaw_min_deg: -30, yaw_max_deg: 30, pitch_min_deg: -25, pitch_max_deg: 25, near_m: 0.3,
+                    far_m: 10, clip_to_overlap: true, require_stereo: false}});
+  $("applyFocus").click();
+};
+$("copyCfg").onclick = async () => {
+  const cfg = {sources: {left: cameraIndex[$("left").value], right: cameraIndex[$("right").value]}, rig: rigFromForm(),
+               focus: focusFromForm(), detail: parseFloat($("detail").value)};
+  try { await navigator.clipboard.writeText(JSON.stringify(cfg, null, 2)); $("copyCfg").textContent = "Copied"; }
+  catch { prompt("Config JSON:", JSON.stringify(cfg)); }
+  setTimeout(() => $("copyCfg").textContent = "Copy config JSON", 1500);
+};
+
+loadCameras().catch(showError).finally(watchCameras);
+poll();
+</script>
+</body>
+</html>
