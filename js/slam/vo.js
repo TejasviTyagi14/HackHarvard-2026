@@ -56,19 +56,26 @@ export class StereoVO {
    * frame: { left, right: grayscale (0–255) at w × h, t: seconds, gap: seconds between the two
    * cameras' capture times (0 if unknown) }.
    */
-  process({ left, right, t = 0, gap = 0 }) {
+  process({ left, right, t = 0, gap = 0, depth = null }) {
     const o = this.o, w = this.w, h = this.h;
     const t0 = now();
-    const L = remap(left, w, h, this.rect.mapL), R = remap(right, w, h, this.rect.mapR);
+    // One camera: depth comes from a model (metres, per pixel of the unwarped left image).
+    const L = remap(left, w, h, this.rect.mapL), R = o.mono ? L : remap(right, w, h, this.rect.mapR);
+    const D = depth && remap(depth, w, h, this.rect.mapL);
     const pyr = buildPyramid(L, w, h, o.levels);
     this.last = { L, R, pyr, t };
+    this.needDepth = false;
     const dt = this.lastT == null ? 1 / 15 : Math.max(1e-3, t - this.lastT);
     let keyframe = null, inliers = 0, rmse = 0, shiftPx = 0;
     const timings = { track: 0, depth: 0 };
 
     if (this.status === 'init') {
+      if (o.mono && !D) {
+        this.needDepth = true;
+        return this.result({ keyframe: null, inliers: 0, L, timings, t0 });
+      }
       const t1 = now();
-      keyframe = this.makeKeyframe(L, R, pyr, this.pose, t, true);
+      keyframe = this.makeKeyframe(L, R, pyr, this.pose, t, true, D);
       timings.depth = now() - t1;
       if (this.features.length >= 40) {
         this.status = 'ok';
@@ -131,10 +138,14 @@ export class StereoVO {
       this.vel = { w: [0, 0, 0], v: [0, 0, 0] };
       if (t - this.lostAt > o.lostTimeout) {
         // Start again from the last known pose; the map may get a seam here.
+        if (o.mono && !D) {
+          this.needDepth = true;
+          return this.result({ keyframe: null, inliers: 0, L, timings, t0 });
+        }
         this.stats.reanchors++;
         this.features = [];
         const t1 = now();
-        keyframe = this.makeKeyframe(L, R, pyr, this.pose, t, false);
+        keyframe = this.makeKeyframe(L, R, pyr, this.pose, t, false, D);
         timings.depth = now() - t1;
         if (this.features.length >= 40) { this.status = 'ok'; this.prevPyr = pyr; this.lastT = t; }
       }
@@ -166,9 +177,11 @@ export class StereoVO {
     if (want) {
       const urgent = this.features.length < 0.35 * o.maxFeatures;
       const synced = shiftPx <= o.maxSyncPx;
-      if (synced || urgent) {
+      if (o.mono && !D) {
+        this.needDepth = true; // ask for depth on the next frame
+      } else if (synced || urgent) {
         const t1 = now();
-        keyframe = this.makeKeyframe(L, R, pyr, this.pose, t, synced);
+        keyframe = this.makeKeyframe(L, R, pyr, this.pose, t, synced, D);
         timings.depth = now() - t1;
       } else {
         this.stats.syncSkips++;
@@ -180,12 +193,42 @@ export class StereoVO {
   }
 
   /** Dense depth for this pair, new features where there are none, and the keyframe's cloud. */
-  makeKeyframe(L, R, pyr, pose, t, fuse) {
+  makeKeyframe(L, R, pyr, pose, t, fuse, depth = null) {
     const o = this.o, w = this.w, h = this.h, { f, cx, cy } = this.intr, fB = f * this.baseline;
-    const nL = localNormalize(L, w, h), nR = localNormalize(R, w, h);
-    const disp = disparityBM(nL.data, nR.data, w, h, {
-      maxDisp: o.maxDisp, texture: nL.std, validL: this.rect.validL, validR: this.rect.validR,
-    });
+    let disp;
+    if (depth) {
+      // A depth model's scale wobbles from frame to frame: rescale this one so it agrees with the 3D
+      // points already being tracked (the first keyframe's metric scale carries through the walk).
+      const Tcw = invert(pose), ratios = [];
+      for (const ft of this.features) {
+        const zc = apply(Tcw, ft.X)[2], zm = depth[Math.round(ft.v) * w + Math.round(ft.u)];
+        if (zc > 0.2 && zm > 0.2) ratios.push(zc / zm);
+      }
+      let k = this.depthScale ?? 1;
+      if (ratios.length >= 15) {
+        ratios.sort((a, b) => a - b);
+        const r = ratios[ratios.length >> 1];
+        const spread = (ratios[(3 * ratios.length) >> 2] - ratios[ratios.length >> 2]) / r;
+        const starving = this.features.length < 0.35 * o.maxFeatures;
+        if ((spread > 0.5 || r < 0.25 || r > 4) && !starving) {
+          // The model got this view wrong (it disagrees with what we're tracking): keep tracking
+          // with the points we have, and don't add this depth to the map.
+          this.stats.badDepth = (this.stats.badDepth ?? 0) + 1;
+          this.kf = { id: this.kfCount++, t, pose, points: new Float32Array(0), gray: new Uint8Array(0), fuse: false, lc: null };
+          return this.kf;
+        }
+        if (spread <= 0.5 && r > 0.25 && r < 4) k = r; // starving on a bad view: keep the last good scale
+      }
+      this.depthScale = k;
+      // …expressed as the disparity a stereo pair would have seen, so everything after is shared.
+      disp = new Float32Array(w * h);
+      for (let i = 0; i < w * h; i++) disp[i] = depth[i] > 0.1 && this.rect.validL[i] ? fB / (depth[i] * k) : -1;
+    } else {
+      const nL = localNormalize(L, w, h), nR = localNormalize(R, w, h);
+      disp = disparityBM(nL.data, nR.data, w, h, {
+        maxDisp: o.maxDisp, texture: nL.std, validL: this.rect.validL, validR: this.rect.validR,
+      });
+    }
     const at = (x, y) => {
       const v = [];
       for (let dy = -1; dy <= 1; dy++) {
@@ -302,7 +345,7 @@ export class StereoVO {
     this.features.forEach((f, i) => { features[2 * i] = f.u; features[2 * i + 1] = f.v; });
     return {
       status: this.status, pose: this.pose, inliers, rmse, shiftPx, keyframe, features,
-      image: L, timings: { ...timings, total: now() - t0 }, stats: this.stats, depthInfo: this.depthInfo ?? null,
+      image: L, timings: { ...timings, total: now() - t0 }, stats: this.stats, depthInfo: this.depthInfo ?? null, needDepth: !!this.needDepth,
     };
   }
 }

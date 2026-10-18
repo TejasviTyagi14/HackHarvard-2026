@@ -18,7 +18,7 @@ import { downloadBlob } from './recorder.js';
 const $ = (id) => document.getElementById(id);
 const MEASURE_KEY = 'stereo-distance:v1';
 const MAP_KEY = 'stereo-map:v1';
-const MAP_DEFAULTS = { camHeight: 1.3, bodyHeight: 1.9, stepHeight: 0.1, rangeMax: 4, quality: 'fast', landmarks: true, fps60: true };
+const MAP_DEFAULTS = { cameras: 'two', camHeight: 1.3, bodyHeight: 1.9, stepHeight: 0.1, rangeMax: 4, quality: 'fast', landmarks: true, fps60: true };
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -74,10 +74,12 @@ function startWorker() {
 
 function initWorker(size) {
   state.size = size;
-  const vOffsetPx = (rigSettings.vOffset || 0) * (size.w / 640);
+  const mono = settings.cameras === 'one';
+  const vOffsetPx = mono ? 0 : (rigSettings.vOffset || 0) * (size.w / 640);
+  document.querySelector('.campair figure:last-child').hidden = mono;
   state.worker.postMessage({
-    type: 'init', size,
-    rig: { baselineCm: rigSettings.baselineCm, angleDeg: rigSettings.angleDeg, hfovDeg: rigSettings.hfovDeg, angleSplit: rigSettings.angleSplit, vOffsetPx },
+    type: 'init', size, mono,
+    rig: { baselineCm: rigSettings.baselineCm, angleDeg: mono ? 0 : rigSettings.angleDeg, hfovDeg: rigSettings.hfovDeg, angleSplit: rigSettings.angleSplit, vOffsetPx },
     world: { camHeight: settings.camHeight, tiltDeg: rigSettings.tiltDeg || 0, bodyHeight: settings.bodyHeight, stepHeight: settings.stepHeight, rangeMax: settings.rangeMax },
   });
   resetMapView();
@@ -92,6 +94,7 @@ function onWorker(m) {
     case 'loop': state.loops = m.loops; banner(`Recognised a place you'd been before and corrected the map by ${Math.round(m.correction * 100)} cm.`, 'info'); break;
     case 'reloc': banner('Found where you are in the map again.', 'info'); break;
     case 'align': onAlign(m); break;
+    case 'status': state.workerStatus = m.text; refreshChips(); break;
     case 'rotation': onRotation(m); break;
     case 'route': state.route = m.route; if (state.nav && m.route?.ok) view3d?.setRoute(m.route.path); drawPlan(); break;
     case 'demoDone': banner('Tour finished. Walk on with the arrow keys (or W A S D), pick a destination on the floor plan, or say "take me back to the start".', 'info'); setDemoButtons('walk'); break;
@@ -226,12 +229,18 @@ async function startCameras() {
   }
   const cams = await listCameras();
   const ids = pickDefaultPair(cams, rigSettings.deviceIds);
-  if (!ids[0] || !ids[1]) return banner(`Found ${cams.length} camera(s). Plug in both IC780s, then try again.`, 'err');
+  if (!ids[0] || (!ids[1] && settings.cameras !== 'one')) return banner(`Found ${cams.length} camera(s). Plug in both IC780s (or set Cameras to one under Mapping settings), then try again.`, 'err');
   const [w, h] = (rigSettings.resolution || '1280x720').split('x').map(Number);
   try {
     // 60 fps halves the worst-case gap between the two cameras' frames, if they can do it.
     const fps = settings.fps60 ? 60 : 30;
-    state.sources = [await openCamera(ids[0], w, h, 'Left', fps), await openCamera(ids[1], w, h, 'Right', fps)];
+    if (settings.cameras === 'one') {
+      // One camera: depth comes from the model, so the same picture stands in for both sides.
+      const only = await openCamera(ids[0], w, h, 'Camera', fps);
+      state.sources = [only, only];
+    } else {
+      state.sources = [await openCamera(ids[0], w, h, 'Left', fps), await openCamera(ids[1], w, h, 'Right', fps)];
+    }
   } catch (e) {
     banner(`Couldn't start the cameras (${e.message}). Two USB cameras on one hub can run out of bandwidth: try a lower resolution on the measuring page, or separate ports.`, 'err');
     return;
@@ -692,6 +701,14 @@ function refreshChips() {
   setChip('chipFps', state.fps ? `${state.fps.toFixed(0)} fps` : '— fps');
   setChip('chipFloor', { fitted: 'Floor found', assumed: 'Floor assumed', pending: 'Finding the floor…' }[state.floor] ?? '', state.floor === 'fitted' ? 'ok' : '');
   const t = state.timings;
+  if (state.workerStatus) {
+    $('camStats').textContent = state.workerStatus;
+    return;
+  }
+  if (st === 'init' && settings.cameras === 'one') {
+    $('camStats').textContent = 'Estimating depth from the picture…';
+    return;
+  }
   if (st === 'init' && state.mode !== 'demo') {
     const a = state.align, d = state.depthInfo;
     $('camStats').textContent = !a || a.action === 'retry'
@@ -769,6 +786,12 @@ function bindSettings() {
       state.worker?.postMessage({ type: 'settings', world: { camHeight: settings.camHeight, bodyHeight: settings.bodyHeight, stepHeight: settings.stepHeight, rangeMax: settings.rangeMax } });
     });
   }
+  $('inCameras').value = settings.cameras;
+  $('inCameras').addEventListener('change', (e) => {
+    settings.cameras = e.target.value;
+    save(MAP_KEY, settings);
+    banner('Applies the next time you start the cameras or the demo.', 'info');
+  });
   $('inQuality').value = settings.quality;
   $('inQuality').addEventListener('change', (e) => { settings.quality = e.target.value; save(MAP_KEY, settings); banner('Quality applies the next time you start the cameras or the demo.', 'info'); });
   $('inLandmarks').checked = settings.landmarks;

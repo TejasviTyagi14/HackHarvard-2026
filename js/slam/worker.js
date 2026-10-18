@@ -15,6 +15,39 @@ let goal = null, planner = null, plannedAt = -Infinity, plannedVersion = -1, pla
 let traj = [], lastTraj = null, demo = null, lastHere = null;
 let closer = null, needReloc = false, lastReloc = 0, loops = 0;
 let aligned = false, alignTries = 0, rotated = false;
+let mono = false, depthPipe = null;
+
+const TRANSFORMERS = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.1';
+const DEPTH_MODEL = 'onnx-community/metric3d-vit-small';
+
+/** Metric depth (m) for a grayscale frame, from Metric3D v2 running on the GPU (WebGPU). */
+async function estimateDepth(gray, w, h) {
+  const tf = await import(TRANSFORMERS);
+  if (!depthPipe) {
+    post({ type: 'status', text: 'Downloading the depth model (150 MB, first time only)…' });
+    try {
+      // Full precision: the half-precision build wants 16-bit input, which the pipeline doesn't send.
+      depthPipe = await tf.pipeline('depth-estimation', DEPTH_MODEL, { device: 'webgpu', dtype: 'fp32' });
+    } catch {
+      depthPipe = await tf.pipeline('depth-estimation', DEPTH_MODEL, { dtype: 'fp32' }); // no WebGPU: slower, on the CPU
+    }
+    post({ type: 'status', text: null });
+  }
+  const rgb = new Uint8ClampedArray(w * h * 3);
+  for (let i = 0; i < w * h; i++) rgb[i * 3] = rgb[i * 3 + 1] = rgb[i * 3 + 2] = gray[i];
+  const out = await depthPipe(new tf.RawImage(rgb, w, h, 3));
+  const t = out.predicted_depth, dims = t.dims, H2 = dims[dims.length - 2], W2 = dims[dims.length - 1];
+  // The pipeline's output is already in metres (checked against the demo building's true depths).
+  const k = cfg.monoScale ?? 1;
+  const src = t.data, D = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const sx = Math.min(W2 - 1, (x * W2) / w), sy = Math.min(H2 - 1, (y * H2) / h);
+      D[y * w + x] = src[Math.floor(sy) * W2 + Math.floor(sx)] * k;
+    }
+  }
+  return D;
+}
 
 const post = (msg, transfer = []) => self.postMessage(msg, transfer);
 
@@ -24,11 +57,14 @@ function setup(m) {
   vo = new StereoVO(m.rig, w, h, { maxDisp: Math.round((64 * w) / 320) });
   world = new World(m.world);
   closer = new LoopCloser(vo.intr);
+  mono = !!m.mono;
+  if (mono) vo = new StereoVO(m.rig, w, h, { mono: true });
   needReloc = false;
   loops = 0;
   aligned = !!m.demo;
   alignTries = 0;
-  rotated = !!m.rig.Rrel;
+  rotated = !!m.rig.Rrel || mono;
+  if (mono) aligned = true;
   traj = [];
   lastTraj = null;
   planner = null;
@@ -55,11 +91,11 @@ function replan(here, now) {
   return planner.route(here);
 }
 
-function process(left, right, t, gap, id, extra = {}) {
-  const r = vo.process({ left, right, t, gap });
+function process(left, right, t, gap, id, extra = {}, depth = null) {
+  const r = vo.process({ left, right, t, gap, depth });
   const now0 = performance.now();
   let loop = null, reloc = false;
-  if ((r.status === 'lost' || needReloc) && world.keyframes.length > 3 && now0 - lastReloc > 500) {
+  if (!mono && (r.status === 'lost' || needReloc) && world.keyframes.length > 3 && now0 - lastReloc > 500) {
     // Lost, or a loaded map: find where we are by recognising a stored keyframe.
     lastReloc = now0;
     const T = closer.relocalize(world, vo.describeLast(), lastHere && [lastHere.x, 0, lastHere.z]);
@@ -143,7 +179,16 @@ function stopDemo() {
   demo = null;
 }
 
-function step() {
+async function step() {
+  try {
+    await demoStep();
+  } catch (err) {
+    post({ type: 'error', message: err.message, stack: err.stack });
+    stopDemo();
+  }
+}
+
+async function demoStep() {
   const d = demo;
   if (!d) return;
   const t0 = performance.now(), dt = 1 / 15;
@@ -167,7 +212,10 @@ function step() {
   const L = renderGray(d.rig.left, truth.pose, d.scene, w, h);
   const R = renderGray(d.rig.right, truth.pose, d.scene, w, h);
   const seen = d.frame % 10 === 0 ? demoSeen(d, truth.pose) : null;
-  const { mp } = process(L, R, d.t, 0, `demo-${d.frame}`, { demo: d.kind, seen: seen?.objects ?? null });
+  const depth = mono && (vo.needDepth || vo.status === 'init') ? await estimateDepth(L, w, h) : null;
+  const { mp } = mono
+    ? process(L, L, d.t, 0, `demo-${d.frame}`, { demo: d.kind, seen: seen?.objects ?? null }, depth)
+    : process(L, R, d.t, 0, `demo-${d.frame}`, { demo: d.kind, seen: seen?.objects ?? null });
   if (seen) for (const o of seen.objects) if (o.range < 4) world.addLandmark(o.cls, apply(mp, o.camPoint));
   // How far the map's idea of where you are is from the truth.
   const B = cfg.rig.baselineCm / 100;
@@ -206,8 +254,13 @@ function demoSeen(d, rigPose) {
 
 const handlers = {
   init: setup,
-  frame(m) {
+  async frame(m) {
     let left = Float32Array.from(new Uint8Array(m.left)), right = Float32Array.from(new Uint8Array(m.right));
+    if (mono) {
+      const depth = vo.needDepth || vo.status === 'init' ? await estimateDepth(left, cfg.size.w, cfg.size.h) : null;
+      process(left, left, m.t, 0, m.id, {}, depth);
+      return;
+    }
     if (!rotated && vo.status === 'init' && alignTries < 40) {
       // Real cameras: first measure how the two are turned relative to each other, and rectify with that.
       const rot = estimateRotation(left, right, cfg.size.w, cfg.size.h, vo.intr, cfg.rig.baselineCm / 100);
@@ -315,10 +368,8 @@ const handlers = {
 };
 
 self.onmessage = (e) => {
-  try {
-    handlers[e.data.type]?.(e.data);
-  } catch (err) {
-    post({ type: 'error', message: err.message, stack: err.stack });
-  }
+  Promise.resolve()
+    .then(() => handlers[e.data.type]?.(e.data))
+    .catch((err) => post({ type: 'error', message: err.message, stack: err.stack }));
 };
 post({ type: 'ready' });
