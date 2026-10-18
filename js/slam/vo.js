@@ -17,7 +17,7 @@ import { GrayFrame, bandSearch } from '../stereo.js';
 export const VO_DEFAULTS = {
   levels: 3, win: 7, maxFeatures: 220, minDistance: 12,
   kfDistance: 0.25, kfAngleDeg: 8, kfMinInterval: 0.15, kfMaxInterval: 1.0,
-  minInliers: 18, maxDisp: 64, minRange: 0.4, maxRange: 6,
+  minStart: 10, minInliers: 10, maxDisp: 64, minRange: 0.4, maxRange: 6,
   cloudStride: 3, cloudRange: 4.5, maxSyncPx: 1.0, lostTimeout: 8,
 };
 
@@ -77,7 +77,7 @@ export class StereoVO {
       const t1 = now();
       keyframe = this.makeKeyframe(L, R, pyr, this.pose, t, true, D);
       timings.depth = now() - t1;
-      if (this.features.length >= 40) {
+      if (this.features.length >= o.minStart) {
         this.status = 'ok';
         this.prevPyr = pyr;
         this.lastT = t;
@@ -147,7 +147,7 @@ export class StereoVO {
         const t1 = now();
         keyframe = this.makeKeyframe(L, R, pyr, this.pose, t, false, D);
         timings.depth = now() - t1;
-        if (this.features.length >= 40) { this.status = 'ok'; this.prevPyr = pyr; this.lastT = t; }
+        if (this.features.length >= o.minStart) { this.status = 'ok'; this.prevPyr = pyr; this.lastT = t; }
       }
       return this.result({ keyframe, inliers: 0, L, timings, t0 });
     }

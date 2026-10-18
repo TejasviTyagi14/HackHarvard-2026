@@ -713,7 +713,7 @@ function refreshChips() {
     const a = state.align, d = state.depthInfo;
     $('camStats').textContent = !a || a.action === 'retry'
       ? `Lining up the two cameras… ${a ? `${a.matches} matches so far` : ''}`
-      : d ? `Depth found on ${Math.round(d.matched * 100)}% of the image, ${d.features} usable points (needs 40). Point at something textured 1–4 m away.` : 'Starting…';
+      : d ? `Depth found on ${Math.round(d.matched * 100)}% of the image, ${d.features} usable points (needs 10). Point at something textured 1–4 m away.` : 'Starting…';
     return;
   }
   $('camStats').textContent = state.status === 'idle' ? '' : [
