@@ -8,6 +8,7 @@ another Python.
 from __future__ import annotations
 
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -19,6 +20,30 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 PORT = int(os.environ.get("DETECT_PORT", "8765"))
 URL = f"http://127.0.0.1:{PORT}"
+
+
+def _port_taken(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+def _pick_port() -> bool:
+    """Points PORT/URL at our running viewer (returns True) or at a free port (returns False).
+
+    Another program may hold the default port; then the next free one is used.
+    """
+    global PORT, URL
+    first = PORT
+    for p in range(first, first + 50):
+        PORT, URL = p, f"http://127.0.0.1:{p}"
+        if _server_up():
+            return True
+        if not _port_taken(p):
+            if p != first:
+                print(f"Port {first} is used by another program; using {p} instead.")
+            return False
+    raise SystemExit(f"Ports {first}-{first + 49} are all in use; set DETECT_PORT to a free one.")
 
 
 def _venv_python() -> Path | None:
@@ -47,13 +72,13 @@ def _open_when_ready() -> None:
 
 
 def main() -> int:
-    if _server_up():
-        print(f"Viewer already running at {URL}; opening it.")
-        webbrowser.open(URL)
-        return 0
     venv = _venv_python()
     if venv is not None and Path(sys.prefix).resolve() != (ROOT / ".venv").resolve():
         os.execv(str(venv), [str(venv), str(Path(__file__).resolve()), *sys.argv[1:]])
+    if _pick_port():
+        print(f"Viewer already running at {URL}; opening it.")
+        webbrowser.open(URL)
+        return 0
     sys.path.insert(0, str(ROOT))
     from detect_object.webapp import main as serve
     threading.Thread(target=_open_when_ready, daemon=True).start()
