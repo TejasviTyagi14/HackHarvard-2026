@@ -62,6 +62,7 @@ export class Speaker {
     this.enabled = false;
     this.last = null;
     this.lastTick = 0;
+    this.nearCount = 3; // objects with a distance per update (the updateItems detail parameter)
   }
 
   get supported() {
@@ -78,7 +79,7 @@ export class Speaker {
     if (!this.enabled || blocked || now - this.lastTick < this.intervalMs) return;
     this.lastTick = now;
     if (this.voice.speaking) return;
-    const { text, items } = speechSummary(objects, units);
+    const { text, items } = speechSummary(objects, units, this.nearCount);
     if (!speechChanged(this.last, items)) return;
     this.last = items;
     this.voice.say(text, { interrupt: false });

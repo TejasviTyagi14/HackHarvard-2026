@@ -4,7 +4,8 @@
   "type": "module",
   "description": "Two webcams in, distances out: a local stereo-vision site.",
   "scripts": {
-    "start": "python3 -m http.server 8765",
+    "start": "python3 tools/droid_bridge.py",
+    "start:static": "python3 -m http.server 8765",
     "test": "node --test"
   }
 }

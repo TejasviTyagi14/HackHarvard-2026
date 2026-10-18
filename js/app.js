@@ -13,6 +13,7 @@ import { classColor, drawMap, drawRigDiagram, drawView, fitCanvas } from './rend
 import { Speaker, Voice } from './speech.js';
 import { Talk } from './talk.js';
 import { sayDistance } from './assistant.js';
+import { DEFAULT_DETAIL, DetailController, normalizeDetail } from './detail.js';
 import { fitFromPerson, personMatches, personReading, pickPerson, robustSubset, verticalOffset } from './personcal.js';
 import { StereoRecorder, downloadBlob } from './recorder.js';
 
@@ -26,12 +27,13 @@ const DEFAULTS = {
   resolution: '1280x720', model: 'lite_mobilenet_v2', minScore: 0.5, units: 'm', detect: true,
   deviceIds: [null, null], debug: false, demoAngleErr: 0, demoBaselineErr: 0, vOffset: 0,
   rigConfirmed: false, calibrated: false, focusCheck: null, talkFollowUp: true, talkSpeak: true,
+  detail: { ...DEFAULT_DETAIL }, // how much the assistant says; set by Droid through the bridge
 };
 
 function loadSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
-    if (saved && typeof saved === 'object') return { ...DEFAULTS, ...saved };
+    if (saved && typeof saved === 'object') return { ...DEFAULTS, ...saved, detail: normalizeDetail(saved.detail) };
   } catch { /* storage unavailable: use defaults */ }
   return { ...DEFAULTS };
 }
@@ -91,6 +93,12 @@ const talk = new Talk({
   onState: onTalkState,
 });
 const recorder = new StereoRecorder();
+// Droid reads level-of-detail requests ("more detail", "just the basics") and proposes new
+// values; the controller validates them before they reach the settings.
+const detailCtl = new DetailController({
+  getDetail: () => state.settings.detail,
+  setDetail: (detail) => setDetail(detail),
+});
 
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 const round = (x, d) => Math.round(x * 10 ** d) / 10 ** d;
@@ -1208,6 +1216,7 @@ async function importSettings(file) {
     for (const k of Object.keys(DEFAULTS)) if (k in rest) state.settings[k] = rest[k];
     if (Array.isArray(samples)) state.calib.samples = samples;
     if (Number.isFinite(vOffset)) state.vOffset = vOffset;
+    setDetail(state.settings.detail);
     syncInputs();
     saveSettings();
     rigChanged();
@@ -1229,7 +1238,7 @@ function sceneForAssistant() {
   else if (state.mode !== 'demo' && state.detectorStatus === 'error') status = 'detector-error';
   return {
     objects: state.objects, pins: state.pinResults, units: state.settings.units,
-    status, paused: state.paused, hfovDeg: state.settings.hfovDeg,
+    status, paused: state.paused, hfovDeg: state.settings.hfovDeg, detail: state.settings.detail,
   };
 }
 
@@ -1248,6 +1257,7 @@ function onTalkAction(action) {
     syncInputs();
   }
   if (action.updates != null) setUpdates(action.updates);
+  if (action.detail) requestDetailChange(action.detail);
   if (action.calibrate === 'capture') {
     const pc = state.pcal;
     // "Calibrate" again after the first position moves on to the second; after both, start over.
@@ -1255,6 +1265,25 @@ function onTalkAction(action) {
   } else if (action.calibrate === 'undo') {
     botSay(undoPersonCal() ? 'Calibration undone.' : 'There is no calibration to undo.');
   }
+}
+
+function setDetail(detail) {
+  state.settings.detail = normalizeDetail(detail);
+  speaker.nearCount = state.settings.detail.updateItems;
+  saveSettings();
+}
+
+/**
+ * Asks Droid to change the level of detail from a request in the user's words ("more detail",
+ * "keep it short"), then says how it went. The assistant routes such requests here; so can any
+ * future input. Resolves to the controller's result ({ ok, detail, changed, rejected, ... }).
+ */
+async function requestDetailChange(text) {
+  const r = await detailCtl.handleRequest(text);
+  if (!r.ok) botSay("I couldn't change how much I say right now.");
+  else if (r.changed.length) botSay(r.reply || 'OK, done.');
+  else botSay(r.reply || "I'm not sure how you'd like me to change that.");
+  return r;
 }
 
 function setUpdates(on) {
@@ -1444,6 +1473,7 @@ async function init() {
   fillDeviceSelects();
   talk.followUp = $('inFollowUp').checked = state.settings.talkFollowUp;
   talk.speakAnswers = $('inSpeakAnswers').checked = state.settings.talkSpeak;
+  speaker.nearCount = state.settings.detail.updateItems;
   onTalkState('idle');
   refreshTalkLog();
   requestAnimationFrame(displayLoop);
@@ -1455,6 +1485,7 @@ async function init() {
 }
 
 // Handy for poking at the pipeline from the browser console.
-window.stereo = { state, start, swapSides, talk };
+// stereo.detail('give me more detail') sends a request straight to Droid.
+window.stereo = { state, start, swapSides, talk, detail: requestDetailChange };
 
 init();

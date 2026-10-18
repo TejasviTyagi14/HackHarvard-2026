@@ -4,6 +4,7 @@
 // conversation so far, which the caller passes back in as `ctx`. Pure logic, no DOM.
 import { clockHour, dist3 } from './geometry.js';
 import { REASONS } from './scene.js';
+import { normalizeDetail } from './detail.js';
 
 // COCO-SSD's 80 classes plus the demo room's, with the words people actually say for them.
 const CLASS_WORDS = {
@@ -51,6 +52,16 @@ const END = /^(stop|stop listening|quiet|be quiet|shush|shut up|cancel|never ?mi
 const HELP = /\b(help|what can (you|i) (do|ask|say)|what do i say|commands|how does this work)\b/;
 const REPEAT = /\b(repeat|say (that|it) again|say again|come again|pardon|what did you say|one more time)\b|^(what|sorry|huh|eh)$/;
 const MORE = /^(what else|anything else|what more|more|tell me more|keep going|go on|continue|the rest|and then|next|others|the others|who else)( is there| do you see)?$/;
+// Asks to change how much the assistant says. Droid works out the new settings (see detail.js).
+const DETAIL = new RegExp([
+  /\b(more|less|fewer|extra|full|maximum|minimum|no|too much|too little|level of|amount of) (detail|details|info|information)\b/,
+  /\b(more|less) (detailed|verbose|wordy|precise|exact)\b/,
+  /\b(be|keep it|keep (your )?answers?|make (it|your answers?)|answers?) (more |a bit |much )?(brief|briefer|short|shorter|concise|simple|simpler|long|longer|detailed|verbose|precise)\b/,
+  /\b(just|only) (give me |tell me )?(the )?basics\b/,
+  /\b(say|talk) (less|more|too much)\b|\btoo (wordy|verbose|long winded|much talking)\b|\bverbosity\b|\bdetail level\b/,
+  /\b(stop|do not keep|no more|skip|drop) (saying |telling me |giving me |adding )?(the )?(oclock|clock directions?|directions|reasons|warnings|caveats|disclaimers)\b/,
+  /\b(exact|precise|rounder|rough) (distances|numbers)\b|\b(in )?centimeters precision\b/,
+].map((r) => r.source).join('|'));
 const PATH = /\b(path|way)\b.*\b(clear|blocked|free|open)\b|\bin (my|the) way\b|\bcan i (walk|go|move|step) (forward|ahead|straight)\b|\bsafe to (walk|go|move)\b|\bblocking\b/;
 const BETWEEN = /\b(between|apart)\b/;
 const CALIBRATE = /\b(re)?calibrat(e|ion|ing)\b/;
@@ -60,7 +71,7 @@ const DESCRIBE = /\b(what|see|look|describe|scan|around|front|ahead|surroundings
 
 export const HELP_TEXT = 'You can ask: what is in front of me, what is closest, how far is the chair, what is on my left, '
   + "what is at 2 o'clock, how far apart are the chair and the table, which is closer, is the path clear, "
-  + 'or is anything within 2 meters. You can also say what else, repeat, use feet, start updates, calibrate, or stop.';
+  + 'or is anything within 2 meters. You can also say what else, repeat, use feet, start updates, more detail, keep it short, calibrate, or stop.';
 
 // ---------------------------------------------------------------------------------------
 // Words
@@ -85,18 +96,44 @@ function joinList(parts) {
   return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
 }
 
-/** "80 centimeters", "2.1 meters", "7 feet" — distances the way they're said out loud. */
-export function sayDistance(m, units = 'm') {
+/**
+ * "80 centimeters", "2.1 meters", "7 feet" — distances the way they're said out loud.
+ * precision: 'coarse' (nearest half meter or foot), 'normal', or 'fine' (centimeters, inches).
+ */
+export function sayDistance(m, units = 'm', precision = 'normal') {
   if (units === 'ft') {
     const ft = m * 3.28084;
+    if (precision === 'fine') {
+      const inches = Math.max(1, Math.round(ft * 12));
+      const f = Math.floor(inches / 12), i = inches % 12;
+      if (!f) return `${i} ${i === 1 ? 'inch' : 'inches'}`;
+      return `${f} ${f === 1 ? 'foot' : 'feet'}${i ? ` ${i} ${i === 1 ? 'inch' : 'inches'}` : ''}`;
+    }
+    if (precision === 'coarse') {
+      const r = Math.max(1, Math.round(ft));
+      return `${r} ${r === 1 ? 'foot' : 'feet'}`;
+    }
     if (ft < 1) return `${Math.max(1, Math.round(ft * 12))} inches`;
     const r = ft < 10 ? Math.round(ft * 2) / 2 : Math.round(ft);
     return `${r} ${r === 1 ? 'foot' : 'feet'}`;
+  }
+  if (precision === 'fine') {
+    if (m < 1) return `${Math.max(1, Math.round(m * 100))} centimeters`;
+    const r = m < 10 ? Math.round(m * 100) / 100 : Math.round(m * 10) / 10;
+    return `${r} ${r === 1 ? 'meter' : 'meters'}`;
+  }
+  if (precision === 'coarse') {
+    const r = m < 10 ? Math.max(0.5, Math.round(m * 2) / 2) : Math.round(m);
+    return r === 0.5 ? 'half a meter' : `${r} ${r === 1 ? 'meter' : 'meters'}`;
   }
   if (m < 0.95) return `${Math.max(10, Math.round(m * 10) * 10)} centimeters`;
   const r = m < 10 ? Math.round(m * 10) / 10 : Math.round(m);
   return `${r} ${r === 1 ? 'meter' : 'meters'}`;
 }
+
+// How answers are worded: units plus the level-of-detail parameters (see detail.js).
+const talkStyle = (scene) => ({ units: scene.units || 'm', d: normalizeDetail(scene.detail) });
+const say = (m, v) => sayDistance(m, v.units, v.d.precision);
 
 function whyNot(o) {
   switch (o.reason) {
@@ -110,22 +147,22 @@ function whyNot(o) {
 
 const clockOf = (o) => `${clockHour(o.azimuth)} o'clock`;
 
-function whereIs(o, units) {
-  if (o.range == null) return `at ${clockOf(o)}, but I can't tell how far, because ${whyNot(o)}`;
-  return `about ${sayDistance(o.range, units)} away at ${clockOf(o)}`;
+function whereIs(o, v) {
+  if (o.range == null) return v.d.reasons ? `at ${clockOf(o)}, but I can't tell how far, because ${whyNot(o)}` : `at ${clockOf(o)}, distance unknown`;
+  return `about ${say(o.range, v)} away at ${clockOf(o)}`;
 }
 
-function lateral(o, units) {
-  if (!o.ground) return '';
+function lateral(o, v) {
+  if (!o.ground || !v.d.lateral) return '';
   const x = o.ground.x;
   if (Math.abs(x) < 0.15) return ', straight ahead of you';
-  return `, about ${sayDistance(Math.abs(x), units)} to your ${x < 0 ? 'left' : 'right'}`;
+  return `, about ${say(Math.abs(x), v)} to your ${x < 0 ? 'left' : 'right'}`;
 }
 
 /** "a chair, 2.1 meters, at 11 o'clock" */
-function shortLine(o, units, withClock = true) {
-  const d = o.range != null ? sayDistance(o.range, units) : 'distance unknown';
-  return withClock ? `${aName(o)}, ${d}, at ${clockOf(o)}` : `${aName(o)}, ${d}`;
+function shortLine(o, v, withClock = true) {
+  const d = o.range != null ? say(o.range, v) : 'distance unknown';
+  return withClock && v.d.clock ? `${aName(o)}, ${d}, at ${clockOf(o)}` : `${aName(o)}, ${d}`;
 }
 
 /** "3 boxes, a pillar and a crate", nearest kind first. */
@@ -331,23 +368,24 @@ function nothingText(scene) {
   return "I don't see anything I recognize right now.";
 }
 
-function describe(objs, scene, units, { who = false } = {}) {
+function describe(objs, scene, v, { who = false } = {}) {
   const list = byDistance(objs);
   if (!list.length) return { intent: who ? 'who' : 'describe', text: who ? "I don't see anyone." : nothingText(scene), subjects: [], group: [], more: [] };
   const intent = who ? 'who' : 'describe';
   if (list.length === 1) {
     const o = list[0];
-    return { intent, text: `I see ${aName(o)}, ${whereIs(o, units)}.`, subjects: [o.key], group: [o.key], more: [] };
+    return { intent, text: `I see ${aName(o)}, ${whereIs(o, v)}.`, subjects: [o.key], group: [o.key], more: [] };
   }
   const kinds = new Set(list.map((o) => o.cls)).size;
   const summary = kinds === 1 ? `I see ${groupPhrase(list)}.` : `I see ${list.length} things: ${groupPhrase(list)}.`;
-  const shown = list.slice(0, 4), rest = list.slice(4);
-  let text = `${summary} Nearest first: ${shown.map((o) => cap(shortLine(o, units))).join('. ')}.`;
+  const shown = list.slice(0, v.d.maxItems), rest = list.slice(v.d.maxItems);
+  const lines = `${shown.map((o) => cap(shortLine(o, v))).join('. ')}.`;
+  let text = v.d.summary ? `${summary} Nearest first: ${lines}` : lines;
   if (rest.length) text += ` ${rest.length === 1 ? 'One more' : `${rest.length} more`} farther away. Say "what else" to hear ${rest.length === 1 ? 'it' : 'them'}.`;
   return { intent, text, subjects: [shown[0].key], group: list.map((o) => o.key), more: rest.map((o) => o.key) };
 }
 
-function missing(ref, scene, ctx, units) {
+function missing(ref, scene, ctx, v) {
   const objs = sceneItems(scene).filter((o) => o.cls !== 'point');
   const seen = objs.length ? ` I can see ${groupPhrase(objs)}.` : '';
   if (ref.type === 'pronoun' || ref.type === 'other') {
@@ -358,43 +396,43 @@ function missing(ref, scene, ctx, units) {
   const name = spokenClass(ref.cls);
   const where = { left: ' on your left', right: ' on your right', ahead: ' straight ahead' }[ref.qual] ?? '';
   if (where && objs.some((o) => o.cls === ref.cls)) {
-    const r = locate({ ...ref, qual: null }, scene, ctx, units);
+    const r = locate({ ...ref, qual: null }, scene, ctx, v);
     return { ...r, text: `There's no ${name}${where}. ${r.text}` };
   }
   return { intent: 'locate', text: `I don't see ${article(name)} ${name}${where} right now.${seen}`, subjects: [], others: [] };
 }
 
-function locate(ref, scene, ctx, units) {
+function locate(ref, scene, ctx, v) {
   const list = resolveRef(ref, scene, ctx);
-  if (!list.length) return missing(ref, scene, ctx, units);
+  if (!list.length) return missing(ref, scene, ctx, v);
   if (list.length === 1) {
     const o = list[0];
     // "How far is it?" keeps the alternatives in play; "the other one" can flip back again.
     const others = ref.type === 'pronoun' ? ctx.others ?? [] : ref.type === 'other' ? (ctx.subjects ?? []).filter((k) => k !== o.key) : [];
     return {
       intent: 'locate',
-      text: `${cap(theName(o))} is ${whereIs(o, units)}${o.range != null ? lateral(o, units) : ''}.`,
+      text: `${cap(theName(o))} is ${whereIs(o, v)}${o.range != null ? lateral(o, v) : ''}.`,
       subjects: [o.key], group: [o.key], others,
     };
   }
   const [a, b, ...rest] = list;
-  let text = `I see ${groupPhrase(list)}. The nearest is ${whereIs(a, units)}`;
+  let text = `I see ${groupPhrase(list)}. The nearest is ${whereIs(a, v)}`;
   text += rest.length
-    ? `. The next is ${whereIs(b, units)}, and there ${rest.length === 1 ? 'is 1 more' : `are ${rest.length} more`} farther away.`
-    : `. The other is ${whereIs(b, units)}.`;
+    ? `. The next is ${whereIs(b, v)}, and there ${rest.length === 1 ? 'is 1 more' : `are ${rest.length} more`} farther away.`
+    : `. The other is ${whereIs(b, v)}.`;
   return { intent: 'locate', text, subjects: [a.key], group: list.map((o) => o.key), others: [b, ...rest].map((o) => o.key) };
 }
 
-function exists(ref, scene, ctx, units) {
+function exists(ref, scene, ctx, v) {
   if (!resolveRef(ref, scene, ctx).length) {
-    const m = missing(ref, scene, ctx, units);
+    const m = missing(ref, scene, ctx, v);
     return { ...m, intent: 'exists', text: `No. ${m.text}` };
   }
-  const r = locate(ref, scene, ctx, units);
+  const r = locate(ref, scene, ctx, v);
   return { ...r, intent: 'exists', text: `Yes. ${r.text}` };
 }
 
-function count(things, objs, scene, ctx, units) {
+function count(things, objs, scene, ctx, v) {
   const ref = things[0];
   if (!ref) {
     if (!objs.length) return { intent: 'count', text: nothingText(scene) };
@@ -403,74 +441,74 @@ function count(things, objs, scene, ctx, units) {
   const list = resolveRef(ref, scene, ctx);
   const name = ref.type === 'class' ? spokenClass(ref.cls) : 'thing';
   if (!list.length) return { intent: 'count', text: `I don't see any ${plural(name)}.` };
-  const n = list.length === 1 ? `${article(name)} ${name}, ${whereIs(list[0], units)}` : `${list.length} ${plural(name)}. The nearest is ${whereIs(list[0], units)}`;
+  const n = list.length === 1 ? `${article(name)} ${name}, ${whereIs(list[0], v)}` : `${list.length} ${plural(name)}. The nearest is ${whereIs(list[0], v)}`;
   return { intent: 'count', text: `I see ${n}.`, subjects: [list[0].key], group: list.map((o) => o.key), others: list.slice(1).map((o) => o.key) };
 }
 
 /** The two things a "between", "apart" or "which is closer" question is about. */
-function twoThings(things, scene, ctx, units) {
+function twoThings(things, scene, ctx, v) {
   if (things.length >= 2) {
     const la = resolveRef(things[0], scene, ctx);
-    if (!la.length) return { fail: missing(things[0], scene, ctx, units) };
+    if (!la.length) return { fail: missing(things[0], scene, ctx, v) };
     const lb = resolveRef(things[1], scene, ctx).filter((o) => o.key !== la[0].key);
     if (!lb.length) {
       return resolveRef(things[1], scene, ctx).length
         ? { fail: { text: `I only see one ${spokenClass(la[0].cls)}.` } }
-        : { fail: missing(things[1], scene, ctx, units) };
+        : { fail: missing(things[1], scene, ctx, v) };
     }
     return { a: la[0], b: lb[0] };
   }
   if (things.length === 1) {
     const l = resolveRef(things[0], scene, ctx);
     if (l.length >= 2) return { a: l[0], b: l[1], same: true, many: l.length > 2 };
-    return { fail: l.length ? locate(things[0], scene, ctx, units) : missing(things[0], scene, ctx, units) };
+    return { fail: l.length ? locate(things[0], scene, ctx, v) : missing(things[0], scene, ctx, v) };
   }
   return { fail: { text: 'Between which two things?' } };
 }
 
-function between(things, scene, ctx, units) {
-  const p = twoThings(things, scene, ctx, units);
+function between(things, scene, ctx, v) {
+  const p = twoThings(things, scene, ctx, v);
   if (p.fail) return { intent: 'between', ...p.fail };
   const { a, b } = p;
   const keys = [a.key, b.key];
   if (!a.point || !b.point) {
     const o = a.point ? b : a;
-    return { intent: 'between', text: `I can't tell how far ${theName(o)} is, so I can't measure the gap: ${whyNot(o)}.`, subjects: keys, group: keys };
+    return { intent: 'between', text: `I can't tell how far ${theName(o)} is, so I can't measure the gap${v.d.reasons ? `: ${whyNot(o)}` : ''}.`, subjects: keys, group: keys };
   }
-  const d = sayDistance(dist3(a.point, b.point), units);
+  const d = say(dist3(a.point, b.point), v);
   const names = p.same && !proper(a)
     ? `The ${p.many ? 'two nearest ' : ''}${plural(spokenClass(a.cls))}`
     : `${cap(theName(a))} and ${theName(b)}`;
   return { intent: 'between', text: `${names} are about ${d} apart.`, subjects: keys, group: keys };
 }
 
-function compare(things, scene, ctx, units, t) {
-  const p = twoThings(things, scene, ctx, units);
+function compare(things, scene, ctx, v, t) {
+  const p = twoThings(things, scene, ctx, v);
   if (p.fail) return { intent: 'compare', ...p.fail };
   const { a, b } = p;
   const keys = [a.key, b.key];
   const unknown = [a, b].find((o) => o.range == null);
-  if (unknown) return { intent: 'compare', text: `I can't tell how far ${theName(unknown)} is: ${whyNot(unknown)}.`, subjects: keys, group: keys };
+  if (unknown) return { intent: 'compare', text: `I can't tell how far ${theName(unknown)} is${v.d.reasons ? `: ${whyNot(unknown)}` : ''}.`, subjects: keys, group: keys };
   const far = /\b(farther|further)\b/.test(t);
   const [win, lose] = (a.range < b.range) !== far ? [a, b] : [b, a];
   return {
     intent: 'compare',
-    text: `${cap(theName(win))} is ${far ? 'farther' : 'closer'}: about ${sayDistance(win.range, units)}, versus ${sayDistance(lose.range, units)} for ${theName(lose)}.`,
+    text: `${cap(theName(win))} is ${far ? 'farther' : 'closer'}: about ${say(win.range, v)}, versus ${say(lose.range, v)} for ${theName(lose)}.`,
     subjects: [win.key, lose.key], group: keys,
   };
 }
 
-function extreme(objs, scene, units, far) {
+function extreme(objs, scene, v, far) {
   const measured = byDistance(objs).filter((o) => o.range != null);
   const intent = far ? 'farthest' : 'nearest';
   if (!measured.length) {
     return { intent, text: objs.length ? `I can see ${groupPhrase(objs)}, but I can't measure how far any of it is yet.` : nothingText(scene) };
   }
   const o = far ? measured[measured.length - 1] : measured[0];
-  return { intent, text: `The ${far ? 'farthest I can measure' : 'closest'} is ${aName(o)}, ${whereIs(o, units)}${lateral(o, units)}.`, subjects: [o.key], group: [o.key] };
+  return { intent, text: `The ${far ? 'farthest I can measure' : 'closest'} is ${aName(o)}, ${whereIs(o, v)}${lateral(o, v)}.`, subjects: [o.key], group: [o.key] };
 }
 
-function direction(dir, objs, scene, units) {
+function direction(dir, objs, scene, v) {
   let list, where;
   if (dir.hour) {
     list = objs.filter((o) => clockHour(o.azimuth) === dir.hour);
@@ -495,54 +533,54 @@ function direction(dir, objs, scene, units) {
     }
     return { intent: 'direction', text, subjects: [], group: [] };
   }
-  const shown = list.slice(0, 4), rest = list.slice(4);
-  let text = `${cap(where)}: ${joinList(shown.map((o) => shortLine(o, units, !dir.hour)))}.`;
+  const shown = list.slice(0, v.d.maxItems), rest = list.slice(v.d.maxItems);
+  let text = `${cap(where)}: ${joinList(shown.map((o) => shortLine(o, v, !dir.hour)))}.`;
   if (rest.length) text += ` And ${rest.length} more farther away.`;
   return { intent: 'direction', text, subjects: [shown[0].key], group: list.map((o) => o.key), more: rest.map((o) => o.key) };
 }
 
-function withinAnswer(w, objs, units) {
-  const lim = sayDistance(w.limit, units);
+function withinAnswer(w, objs, v) {
+  const lim = say(w.limit, v);
   const list = byDistance(objs.filter((o) => o.range != null && o.range <= w.limit));
   if (!list.length) {
     const c = byDistance(objs).find((o) => o.range != null);
     return {
       intent: 'within',
-      text: `Nothing I can see is within ${lim}.${c ? ` The closest is ${aName(c)}, ${whereIs(c, units)}.` : ''}`,
+      text: `Nothing I can see is within ${lim}.${c ? ` The closest is ${aName(c)}, ${whereIs(c, v)}.` : ''}`,
       subjects: c ? [c.key] : [],
     };
   }
-  const shown = list.slice(0, 4), rest = list.slice(4);
+  const shown = list.slice(0, v.d.maxItems), rest = list.slice(v.d.maxItems);
   return {
     intent: 'within',
-    text: `${list.length === 1 ? 'One thing is' : `${list.length} things are`} within ${lim}: ${joinList(shown.map((o) => shortLine(o, units)))}.${rest.length ? ` And ${rest.length} more.` : ''}`,
+    text: `${list.length === 1 ? 'One thing is' : `${list.length} things are`} within ${lim}: ${joinList(shown.map((o) => shortLine(o, v)))}.${rest.length ? ` And ${rest.length} more.` : ''}`,
     subjects: [shown[0].key], group: list.map((o) => o.key), more: rest.map((o) => o.key),
   };
 }
 
-function path(objs, units) {
+function path(objs, v) {
   // A corridor about shoulder-width wide, 3 m deep, straight ahead.
   const inPath = byDistance(objs.filter((o) => o.ground && Math.abs(o.ground.x) < 0.45 && o.ground.z > 0 && o.ground.z < 3));
-  const caveat = " I only recognize about 80 kinds of things, so don't rely on me alone.";
+  const caveat = v.d.caveats ? " I only recognize about 80 kinds of things, so don't rely on me alone." : '';
   if (inPath.length) {
     const o = inPath[0];
     const more = inPath.length > 1 ? ` ${inPath.length - 1 === 1 ? 'Something else is' : `${inPath.length - 1} more things are`} behind it.` : '';
-    return { intent: 'path', text: `${cap(aName(o))} is in your path, about ${sayDistance(o.ground.z, units)} ahead.${more}`, subjects: [o.key], group: inPath.map((x) => x.key) };
+    return { intent: 'path', text: `${cap(aName(o))} is in your path, about ${say(o.ground.z, v)} ahead.${more}`, subjects: [o.key], group: inPath.map((x) => x.key) };
   }
   const unsure = objs.filter((o) => !o.ground && Math.abs(o.azimuth) < 12);
-  let text = `I don't see anything in your path for the next ${sayDistance(3, units)}.`;
+  let text = `I don't see anything in your path for the next ${say(3, v)}.`;
   if (unsure.length) text += ` There is ${aName(unsure[0])} ahead, though, and I can't tell how far it is.`;
   return { intent: 'path', text: text + caveat, subjects: unsure.length ? [unsure[0].key] : [] };
 }
 
-function more(ctx, scene, units) {
+function more(ctx, scene, v) {
   const items = sceneItems(scene);
   const list = (ctx.more ?? []).map((k) => items.find((o) => o.key === k)).filter(Boolean);
   if (!list.length) return { intent: 'more', text: "That's everything I can see.", more: [] };
-  const shown = list.slice(0, 4), rest = list.slice(4);
+  const shown = list.slice(0, v.d.maxItems), rest = list.slice(v.d.maxItems);
   return {
     intent: 'more',
-    text: `Also ${joinList(shown.map((o) => shortLine(o, units)))}.${rest.length ? ` And ${rest.length} more.` : ''}`,
+    text: `Also ${joinList(shown.map((o) => shortLine(o, v)))}.${rest.length ? ` And ${rest.length} more.` : ''}`,
     subjects: [shown[0].key], group: shown.map((o) => o.key), more: rest.map((o) => o.key),
   };
 }
@@ -553,30 +591,30 @@ function statusText(scene) {
   return null;
 }
 
-function sceneRoute(t, scene, ctx, units) {
+function sceneRoute(t, scene, ctx, v) {
   const refs = findRefs(t.split(' '), buildLexicon(scene));
   const things = refs.filter((r) => ['class', 'item', 'pin', 'pronoun', 'other'].includes(r.type));
   const objs = sceneItems(scene).filter((o) => o.cls !== 'point');
 
-  if (MORE.test(t)) return more(ctx, scene, units);
-  if (PATH.test(t)) return path(objs, units);
-  if (/\bhow many\b/.test(t)) return count(things, objs, scene, ctx, units);
-  if (COMPARE.test(t) && things.length >= 2 && !/\d/.test(t)) return compare(things, scene, ctx, units, t);
-  if (BETWEEN.test(t) || (things.length >= 2 && /\bfrom\b/.test(t))) return between(things, scene, ctx, units);
-  if (things.length) return EXISTS.test(t) ? exists(things[0], scene, ctx, units) : locate(things[0], scene, ctx, units);
-  const within = withinIntent(t, units);
-  if (within) return withinAnswer(within, objs, units);
-  if (/\b(closest|nearest)\b/.test(t)) return extreme(objs, scene, units, false);
-  if (/\b(farthest|furthest)\b/.test(t)) return extreme(objs, scene, units, true);
+  if (MORE.test(t)) return more(ctx, scene, v);
+  if (PATH.test(t)) return path(objs, v);
+  if (/\bhow many\b/.test(t)) return count(things, objs, scene, ctx, v);
+  if (COMPARE.test(t) && things.length >= 2 && !/\d/.test(t)) return compare(things, scene, ctx, v, t);
+  if (BETWEEN.test(t) || (things.length >= 2 && /\bfrom\b/.test(t))) return between(things, scene, ctx, v);
+  if (things.length) return EXISTS.test(t) ? exists(things[0], scene, ctx, v) : locate(things[0], scene, ctx, v);
+  const within = withinIntent(t, v.units);
+  if (within) return withinAnswer(within, objs, v);
+  if (/\b(closest|nearest)\b/.test(t)) return extreme(objs, scene, v, false);
+  if (/\b(farthest|furthest)\b/.test(t)) return extreme(objs, scene, v, true);
   const dir = directionIntent(t);
-  if (dir) return direction(dir, objs, scene, units);
-  if (/\bwho\b/.test(t)) return describe(objs.filter((o) => o.cls === 'person'), scene, units, { who: true });
-  if (DESCRIBE.test(t) || refs.some((r) => r.type === 'all')) return describe(objs, scene, units);
+  if (dir) return direction(dir, objs, scene, v);
+  if (/\bwho\b/.test(t)) return describe(objs.filter((o) => o.cls === 'person'), scene, v, { who: true });
+  if (DESCRIBE.test(t) || refs.some((r) => r.type === 'all')) return describe(objs, scene, v);
   return { intent: 'unknown', text: 'Sorry, I didn\'t catch that. Try "what is in front of me?" or "how far is the chair?"' };
 }
 
 function route(t, scene, ctx) {
-  const units = scene.units || 'm';
+  const v = talkStyle(scene);
   if (!t) return { intent: 'unknown', text: "I didn't hear a question." };
   if (END.test(t)) return { intent: 'end', text: /thank/.test(t) ? "You're welcome." : 'OK.', action: { end: true } };
   if (CALIBRATE.test(t)) {
@@ -585,6 +623,10 @@ function route(t, scene, ctx) {
     const d = t.match(/(\d+(?:\.\d+)?)\s*(m|meters?|metres?|ft|feet|foot)\b/);
     const range = d ? Number(d[1]) * (/^(ft|feet|foot)$/.test(d[2]) ? 0.3048 : 1) : null;
     return { intent: 'calibrate', text: '', action: { calibrate: 'capture', range, end: true } };
+  }
+  if (DETAIL.test(t)) {
+    // The page hands the request to Droid and says its answer when it arrives.
+    return { intent: 'detail', text: 'One moment.', action: { detail: t, end: true } };
   }
   const upd = updatesIntent(t);
   if (upd != null) {
@@ -610,13 +652,14 @@ function route(t, scene, ctx) {
   if (REPEAT.test(t)) return { intent: 'repeat', text: ctx.lastText || "I haven't said anything yet." };
   const gate = statusText(scene);
   if (gate) return { intent: 'status', text: gate };
-  const r = sceneRoute(t, scene, ctx, units);
+  const r = sceneRoute(t, scene, ctx, v);
   return scene.paused ? { ...r, text: `The view is paused, so this is from the frozen frame. ${r.text}` } : r;
 }
 
 /**
  * Answers one question.
- * scene: { objects, pins, units, status ('ok' | 'no-video' | 'loading' | 'detector-off' | 'detector-error'), paused, hfovDeg }
+ * scene: { objects, pins, units, status ('ok' | 'no-video' | 'loading' | 'detector-off' | 'detector-error'), paused, hfovDeg,
+ *   detail (level-of-detail parameters, see detail.js; defaults when missing) }
  * ctx: the `ctx` returned by the previous answer (or {} to start a conversation).
  * Returns { question, intent, text, action, focus (object id to highlight or null), ctx }.
  */

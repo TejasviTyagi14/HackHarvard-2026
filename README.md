@@ -61,6 +61,7 @@ Things you can ask:
 - "Is anything within 2 meters?" / "Is anything near me?" / "Is the path clear?"
 - "Calibrate" (or "calibrate at 3 meters"), "undo the calibration"
 - "Use feet", "start updates", "stop updates", "say that again", "help"
+- "More detail", "keep it short", "just the basics" (Droid adjusts how much it says; see below)
 
 Answers come from the live measurements only, so it never guesses a distance it doesn't have. If an
 object has no distance, it says why ("only one camera can see it").
@@ -72,6 +73,16 @@ the microphone; on macOS also allow Chrome under System Settings → Privacy & S
 
 "Is the path clear?" only knows the detector's 80 kinds of objects. It's a convenience, not a
 mobility aid.
+
+## How much it says (Droid)
+
+How many objects it lists, whether it adds directions and reasons, and how finely it rounds
+distances are parameters that Droid (Factory's agent) sets while the app runs. Say or type "more
+detail", "keep it short", "just the basics" or "stop saying the o'clock", and Droid picks the new
+settings. To use it, set `FACTORY_API_KEY` and run the site with `npm start`
+(`python3 tools/droid_bridge.py`) instead of `python3 -m http.server 8765`. Without the bridge,
+the assistant keeps its usual level of detail.
+See [docs/DROID_DETAIL.md](docs/DROID_DETAIL.md).
 
 ## The phases, and the check for each one on the real cameras
 
@@ -201,12 +212,14 @@ js/sources.js               cameras, recordings, demo canvases
 js/render.js                drawing the views, map and rig sketch
 js/personcal.js             person calibration: find, match, solve spacing and angle
 js/assistant.js             answers questions about the scene, with follow-up context
+js/detail.js                level-of-detail parameters, their checks, and the Droid controller
+tools/droid_bridge.py       serves the site and runs Droid for level-of-detail requests
 js/talk.js                  the listen → answer → speak → listen-again loop
 js/speech.js                shared voice, periodic updates, speech recognition, tones
 js/recorder.js              side-by-side recording
 tests/                      node --test suites for the pure modules
 ```
 
-Run the tests with `node --test` from this folder. They cover the geometry, matching, calibration,
+Run the tests with `node --test` from this folder (and `python3 -m unittest discover tests` for the Droid bridge). They cover the geometry, matching, calibration,
 pairing, tracking, speech, question-answering and person-calibration logic, including end-to-end
 measurements on the rendered demo room.

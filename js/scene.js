@@ -309,9 +309,9 @@ export function spokenDistance(m, units = 'm') {
   return `${v} meter${v === 1 ? '' : 's'}`;
 }
 
-/** Nearest three objects with a distance, then up to two without. */
-export function speechSummary(objects, units = 'm') {
-  const near = objects.filter((o) => o.range != null).sort((a, b) => a.range - b.range).slice(0, 3);
+/** Nearest `nearCount` objects with a distance (three by default), then up to two without. */
+export function speechSummary(objects, units = 'm', nearCount = 3) {
+  const near = objects.filter((o) => o.range != null).sort((a, b) => a.range - b.range).slice(0, nearCount);
   const rest = objects.filter((o) => o.range == null).slice(0, 2);
   const items = [...near, ...rest].map((o) => ({ cls: o.cls, range: o.range, clock: clockHour(o.azimuth) }));
   if (!items.length) return { text: 'Nothing in view.', items };
