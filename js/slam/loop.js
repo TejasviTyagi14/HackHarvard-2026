@@ -7,7 +7,8 @@
 //     RANSAC on the 3D positions), then confirm it by re-projecting into the current image.
 // Pure functions, no DOM.
 import { goodFeatures } from './klt.js';
-import { invert, mulv, refinePose } from './se3.js';
+import { expSO3, invert, logSO3, mul3, mulv, refinePose, rotY, tr3 } from './se3.js';
+import { buildPyramid } from './klt.js';
 
 const PATCH = 12; // BRIEF compares pixel pairs within ±12 px
 
@@ -246,4 +247,91 @@ export function verifyPlace(cur, cand, intr, { minInliers = 25, iters = 300 } = 
   const good = [...r.err].filter((e) => e < 2.5).length;
   if (good < minInliers) return null;
   return { pose: invert(r.pose), inliers: good, matches: pairs.length };
+}
+
+/** Rotation R minimising Σ |R·a − b|² for unit vectors (no translation): Horn's method, uncentred. */
+function rotationOnly(A, B, ia, ib) {
+  const S = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  for (let k = 0; k < ia.length; k++) for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) S[r][c] += A[ia[k] * 3 + r] * B[ib[k] * 3 + c];
+  const [[xx, xy, xz], [yx, yy, yz], [zx, zy, zz]] = S;
+  const [w, x, y, z] = jacobiMaxEigenvector([
+    [xx + yy + zz, yz - zy, zx - xz, xy - yx],
+    [yz - zy, xx - yy - zz, xy + yx, zx + xz],
+    [zx - xz, xy + yx, -xx + yy - zz, yz + zy],
+    [xy - yx, zx + xz, yz + zy, -xx - yy + zz],
+  ]);
+  return [
+    1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y),
+    2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x),
+    2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y),
+  ];
+}
+
+/**
+ * How the right camera is turned relative to the left, from matched features in the raw images
+ * (most of a room is far enough away that a pure rotation explains the shift).
+ * Returns { R (left-camera directions → right-camera directions), inliers, yaw, pitch, roll } or null.
+ */
+export function estimateRotation(L, R, w, h, intr, baseline = 0.12, farthest = 8) {
+  const feats = (img) => {
+    const pts = goodFeatures(buildPyramid(img, w, h, 1)[0], { maxCorners: 400, minDistance: 7, border: PATCH + 2 });
+    return { pts, desc: brief(blur(img, w, h), w, pts) };
+  };
+  const a = feats(L), b = feats(R);
+  const pairs = matchDescriptors(a.desc, b.desc, { maxDist: 70, ratio: 0.85 });
+  if (pairs.length < 20) return null;
+  const ray = (pts, i) => {
+    const x = (pts[2 * i] - intr.cx) / intr.f, y = (pts[2 * i + 1] - intr.cy) / intr.f, n = Math.hypot(x, y, 1);
+    return [x / n, y / n, 1 / n];
+  };
+  const A = [], B = [];
+  for (const [i, j] of pairs) { A.push(...ray(a.pts, i)); B.push(...ray(b.pts, j)); }
+  const tol = 1.5 / intr.f; // ~1.5 px
+  const err = (Rm, k) => {
+    const p = mulv(Rm, [A[k * 3], A[k * 3 + 1], A[k * 3 + 2]]);
+    return Math.hypot(p[0] - B[k * 3], p[1] - B[k * 3 + 1], p[2] - B[k * 3 + 2]);
+  };
+  let seed = 11, best = null;
+  const n = pairs.length;
+  for (let it = 0; it < 400; it++) {
+    const i = (seed = (seed * 16807) % 2147483647) % n, j = (seed = (seed * 16807) % 2147483647) % n;
+    if (i === j) continue;
+    const Rm = rotationOnly(A, B, [i, j], [i, j]);
+    let c = 0;
+    for (let k = 0; k < n; k++) if (err(Rm, k) < tol) c++;
+    if (!best || c > best.c) best = { Rm, c };
+  }
+  if (!best || best.c < 20) return null;
+  const inl = [...Array(n).keys()].filter((k) => err(best.Rm, k) < tol);
+  let Rm = rotationOnly(A, B, inl, inl);
+  // Tilt and roll come out exactly, but left–right angle can't be told apart from the sideways
+  // shift the camera spacing causes (that needs a known distance). Set it so the farthest matches
+  // sit at a plausible indoor distance; calibrating with a known distance pins it down properly.
+  const dispAt = (Rx) => {
+    const half = expSO3(logSO3(Rx).map((v) => v / 2)), back = tr3(half);
+    const d = inl.map((k) => {
+      const a = mulv(half, [A[k * 3], A[k * 3 + 1], A[k * 3 + 2]]), b = mulv(back, [B[k * 3], B[k * 3 + 1], B[k * 3 + 2]]);
+      return intr.f * (a[0] / a[2] - b[0] / b[2]);
+    }).sort((p, q) => p - q);
+    return d[Math.floor(d.length * 0.05)];
+  };
+  const target = (intr.f * baseline) / farthest;
+  const yawed = (e) => mul3(rotY(e), Rm);
+  let lo = -0.2, hi = 0.2;
+  if ((dispAt(yawed(lo)) - target) * (dispAt(yawed(hi)) - target) < 0) {
+    const up = dispAt(yawed(hi)) > dispAt(yawed(lo));
+    for (let it = 0; it < 40; it++) {
+      const mid = (lo + hi) / 2;
+      if ((dispAt(yawed(mid)) > target) === up) hi = mid; else lo = mid;
+    }
+    Rm = yawed((lo + hi) / 2);
+  }
+  // Where the right camera points, seen from the left camera (+ yaw = right, + pitch = down).
+  const fwd = [Rm[6], Rm[7], Rm[8]]; // third row = R^T·(0,0,1)
+  const deg = 180 / Math.PI;
+  return {
+    R: Rm, inliers: inl.length, matches: n,
+    yaw: Math.atan2(fwd[0], fwd[2]) * deg, pitch: Math.asin(Math.max(-1, Math.min(1, fwd[1]))) * deg,
+    roll: Math.atan2(Rm[3], Rm[4]) * deg, angle: Math.hypot(...logSO3(Rm)) * deg,
+  };
 }

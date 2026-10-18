@@ -6,6 +6,7 @@ import { StereoVO } from './vo.js';
 import { World } from './world.js';
 import { GoalPlanner } from './plan.js';
 import { LoopCloser } from './closer.js';
+import { estimateRotation } from './loop.js';
 import { buildingScene, firstHit, poseAt, renderGray, tour, walk } from './building.js';
 import { apply, invert, mulv } from './se3.js';
 
@@ -13,7 +14,7 @@ let cfg = null, vo = null, world = null, mapping = true;
 let goal = null, planner = null, plannedAt = -Infinity, plannedVersion = -1, plannedFrom = null;
 let traj = [], lastTraj = null, demo = null, lastHere = null;
 let closer = null, needReloc = false, lastReloc = 0, loops = 0;
-let aligned = false, alignTries = 0;
+let aligned = false, alignTries = 0, rotated = false;
 
 const post = (msg, transfer = []) => self.postMessage(msg, transfer);
 
@@ -27,6 +28,7 @@ function setup(m) {
   loops = 0;
   aligned = !!m.demo;
   alignTries = 0;
+  rotated = !!m.rig.Rrel;
   traj = [];
   lastTraj = null;
   planner = null;
@@ -206,18 +208,37 @@ const handlers = {
   init: setup,
   frame(m) {
     let left = Float32Array.from(new Uint8Array(m.left)), right = Float32Array.from(new Uint8Array(m.right));
-    if (!aligned && vo.status === 'init' && alignTries < 40) {
-      // Real cameras: before tracking, check the pair is in the right order and level.
+    if (!rotated && vo.status === 'init' && alignTries < 40) {
+      // Real cameras: first measure how the two are turned relative to each other, and rectify with that.
+      const rot = estimateRotation(left, right, cfg.size.w, cfg.size.h, vo.intr, cfg.rig.baselineCm / 100);
+      alignTries++;
+      if (rot && rot.inliers >= 25) {
+        rotated = true;
+        cfg.rig = { ...cfg.rig, Rrel: rot.R, vOffsetPx: 0 };
+        // The measured yaw only roughly fixes the scale, so let far points count for tracking.
+        vo = new StereoVO(cfg.rig, cfg.size.w, cfg.size.h, { maxDisp: vo.o.maxDisp, maxRange: 12 });
+        closer = new LoopCloser(vo.intr);
+        post({ type: 'rotation', yaw: rot.yaw, pitch: rot.pitch, roll: rot.roll, angle: rot.angle, inliers: rot.inliers, R: rot.R });
+      } else {
+        post({ type: 'align', matches: rot?.inliers ?? 0, action: 'retry', tries: alignTries });
+      }
+      process(left, right, m.t, m.gap, m.id);
+      return;
+    }
+    if (!aligned && vo.status === 'init' && alignTries < 80) {
+      // …then check the pair is in the right order and level.
       const a = vo.checkAlignment(left, right);
       alignTries++;
       if (a.matches >= 8 && a.swapped) {
         post({ type: 'align', ...a, action: 'swap' });
+        rotated = false; // measure the rotation again with the cameras the right way round
+        cfg.rig = { ...cfg.rig, Rrel: null };
         [left, right] = [right, left]; // the page swaps them from the next frame on
       } else if (a.matches >= 8) {
         aligned = true;
         if (Math.abs(a.dy) > 0.6) {
           cfg.rig = { ...cfg.rig, vOffsetPx: (cfg.rig.vOffsetPx ?? 0) + a.dy };
-          vo = new StereoVO(cfg.rig, cfg.size.w, cfg.size.h, { maxDisp: vo.o.maxDisp });
+          vo = new StereoVO(cfg.rig, cfg.size.w, cfg.size.h, { maxDisp: vo.o.maxDisp, maxRange: vo.o.maxRange });
           closer = new LoopCloser(vo.intr);
         }
         post({ type: 'align', ...a, action: 'ok', vOffsetPx: cfg.rig.vOffsetPx ?? 0 });

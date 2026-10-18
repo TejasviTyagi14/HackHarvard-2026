@@ -175,3 +175,26 @@ test('camera check: spots a swapped pair and a vertical offset', () => {
   const fixed = new StereoVO({ ...params, vOffsetPx: off.dy }, W, H);
   assert.equal(fixed.process({ left: L, right: low, t: 0 }).status, 'ok');
 });
+
+test('cameras pointing 20° apart and tilted: measured from the images, then tracking starts', async () => {
+  const { estimateRotation } = await import('../js/slam/loop.js');
+  const { rotX } = await import('../js/slam/se3.js');
+  const W = 320, H = 180;
+  // The real rig: toed in 20°, right camera also tilted 4° down. The app is told it's parallel.
+  const real = buildRig({ baselineCm: 12, angleDeg: 20, hfovDeg: 70 }, { w: W, h: H }), scene = buildingScene();
+  const pose = { R: [1, 0, 0, 0, 1, 0, 0, 0, 1], t: [0, 0, 0.3] };
+  const c = real.right.pos, E = rotX(4 * Math.PI / 180);
+  const Ec = [E[0] * c[0], E[3] * c[0], E[6] * c[0]];
+  const tilted = { R: E, t: [c[0] - Ec[0], -Ec[1], -Ec[2]] }; // tilt about the right camera's own centre
+  const L = renderGray(real.left, pose, scene, W, H), R = renderGray(real.right, compose(pose, tilted), scene, W, H);
+  const told = { baselineCm: 12, angleDeg: 0, hfovDeg: 70 };
+  assert.equal(new StereoVO(told, W, H).process({ left: L, right: R, t: 0 }).status, 'init', "can't start without knowing the angle");
+  const vo0 = new StereoVO(told, W, H);
+  const rot = estimateRotation(L, R, W, H, vo0.intr);
+  assert.ok(rot && rot.inliers >= 25, JSON.stringify(rot && { inliers: rot.inliers }));
+  near(rot.yaw, -20, 1.5, 'yaw (right camera turned left)');
+  near(Math.abs(rot.pitch), 4, 1.5, 'tilt');
+  const vo = new StereoVO({ ...told, Rrel: rot.R }, W, H, { maxRange: 12 });
+  const r = vo.process({ left: L, right: R, t: 0 });
+  assert.equal(r.status, 'ok', `depth on ${Math.round(r.depthInfo.matched * 100)}%, ${r.depthInfo.features} points`);
+});

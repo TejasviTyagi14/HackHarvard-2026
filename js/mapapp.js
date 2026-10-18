@@ -92,6 +92,7 @@ function onWorker(m) {
     case 'loop': state.loops = m.loops; banner(`Recognised a place you'd been before and corrected the map by ${Math.round(m.correction * 100)} cm.`, 'info'); break;
     case 'reloc': banner('Found where you are in the map again.', 'info'); break;
     case 'align': onAlign(m); break;
+    case 'rotation': onRotation(m); break;
     case 'route': state.route = m.route; if (state.nav && m.route?.ok) view3d?.setRoute(m.route.path); drawPlan(); break;
     case 'demoDone': banner('Tour finished. Walk on with the arrow keys (or W A S D), pick a destination on the floor plan, or say "take me back to the start".', 'info'); setDemoButtons('walk'); break;
     case 'saved': downloadBlob(new Blob([m.data], { type: 'application/json' }), `building-map-${stamp()}.json`); break;
@@ -118,6 +119,15 @@ function onAlign(a) {
     if (Math.abs(a.dy) > 0.6) banner(`The cameras aren't quite level with each other (${Math.abs(a.dy * 640 / state.size.w).toFixed(0)} px); I've corrected for it.`, 'info');
   } else if (a.tries === 15) {
     banner(`I can't match the two camera images (${a.matches} matches). Compare the two views under Cameras: they should show the same scene, slightly shifted sideways. If one is a different camera, pick the pair on the Measure page; if they point different ways, straighten them on the bar.`, 'err');
+  }
+}
+
+function onRotation(r) {
+  state.rotation = r;
+  const big = Math.abs(r.yaw) > 8 || Math.abs(r.pitch) > 3 || Math.abs(r.roll) > 3;
+  if (big) {
+    const turn = `${Math.abs(r.yaw).toFixed(0)}° ${r.yaw < 0 ? 'toward each other' : 'apart'}`;
+    banner(`Measured how your cameras are mounted: they point about ${turn}, with ${Math.abs(r.pitch).toFixed(0)}° of tilt and ${Math.abs(r.roll).toFixed(0)}° of roll between them. I've corrected for it so tracking can start, but only the part both can see gives depth, and distances are approximate until you calibrate. For the best map, point them the same way and level.`, 'info');
   }
 }
 
