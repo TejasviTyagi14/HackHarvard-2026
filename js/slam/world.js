@@ -7,7 +7,7 @@
 //
 // Map frame: x right and z forward as at the start, y straight down, floor at y = 0
 // (so height above the floor is −y).
-import { apply, compose, mul3, mulv, rotX } from './se3.js';
+import { apply, compose, invert, mul3, mulv, rotX } from './se3.js';
 
 export const WORLD_DEFAULTS = {
   cell: 0.05, // floor-grid cell (m)
@@ -66,7 +66,7 @@ export class World {
   }
 
   addKeyframe(kf) {
-    const keep = { id: kf.id, t: kf.t, pose: { R: kf.pose.R.slice(), t: kf.pose.t.slice() }, points: kf.points, gray: kf.gray, fuse: kf.fuse };
+    const keep = { id: kf.id, t: kf.t, pose: { R: kf.pose.R.slice(), t: kf.pose.t.slice() }, points: kf.points, gray: kf.gray, fuse: kf.fuse, lc: kf.lc };
     this.keyframes.push(keep);
     if (!this.align) {
       this.waiting.push(keep);
@@ -226,6 +226,31 @@ export class World {
     }
   }
 
+  /** Ties a map point to the newest keyframe, so it moves when that keyframe is corrected. */
+  anchor(p) {
+    const kf = this.keyframes[this.keyframes.length - 1];
+    if (!kf) return null;
+    return { k: this.keyframes.length - 1, local: apply(invert(this.mapPose(kf.pose)), p) };
+  }
+
+  /**
+   * New keyframe poses (map frame, same order as this.keyframes) after a loop closure: moves the
+   * keyframes, anything anchored to them, and rebuilds the map.
+   */
+  correct(mapPoses) {
+    const toOdo = invert(this.align ?? this.assumedAlign());
+    mapPoses.forEach((P, k) => { this.keyframes[k].pose = compose(toOdo, P); });
+    const move = (o) => {
+      if (!o.anchor) return;
+      const p = apply(this.mapPose(this.keyframes[o.anchor.k].pose), o.anchor.local);
+      o.x = p[0]; o.z = p[2];
+      if ('y' in o) o.y = p[1];
+    };
+    this.places.forEach(move);
+    this.landmarks.forEach(move);
+    this.rebuild();
+  }
+
   /** Remembers a detected object (map frame); repeated sightings within 0.8 m are merged. */
   addLandmark(cls, p) {
     const near = this.landmarks.find((l) => l.cls === cls && Math.hypot(l.x - p[0], l.z - p[2]) < 0.8);
@@ -236,7 +261,7 @@ export class World {
       near.z += (p[2] - near.z) / near.n;
       return near;
     }
-    const l = { id: this.landmarks.length + 1, cls, x: p[0], y: p[1], z: p[2], n: 1 };
+    const l = { id: this.landmarks.length + 1, cls, x: p[0], y: p[1], z: p[2], n: 1, anchor: this.anchor(p) };
     this.landmarks.push(l);
     return l;
   }
@@ -249,7 +274,7 @@ export class World {
   setPlace(name, x, z) {
     const key = name.trim().toLowerCase();
     this.places = this.places.filter((p) => p.name.toLowerCase() !== key);
-    const place = { name: name.trim(), x, z };
+    const place = { name: name.trim(), x, z, anchor: this.anchor([x, 0, z]) };
     this.places.push(place);
     return place;
   }
@@ -277,6 +302,7 @@ export class World {
       landmarks: this.landmarks, places: this.places, ...extra,
       keyframes: this.keyframes.map((k) => ({
         id: k.id, t: k.t, R: k.pose.R, tt: k.pose.t, fuse: k.fuse, points: toB64(k.points.buffer), gray: toB64(k.gray.buffer),
+        lc: k.lc && { uv: toB64(k.lc.uv.buffer), pts3: toB64(k.lc.pts3.buffer), desc: toB64(k.lc.desc.buffer), thumb: toB64(k.lc.thumb.buffer) },
       })),
     };
   }
@@ -289,7 +315,8 @@ export class World {
     w.landmarks = data.landmarks ?? [];
     w.places = data.places ?? [];
     for (const k of data.keyframes) {
-      const kf = { id: k.id, t: k.t, pose: { R: k.R, t: k.tt }, fuse: k.fuse, points: new Float32Array(fromB64(k.points)), gray: new Uint8Array(fromB64(k.gray)) };
+      const lc = k.lc && { uv: new Float32Array(fromB64(k.lc.uv)), pts3: new Float32Array(fromB64(k.lc.pts3)), desc: new Uint32Array(fromB64(k.lc.desc)), thumb: new Float32Array(fromB64(k.lc.thumb)) };
+      const kf = { id: k.id, t: k.t, pose: { R: k.R, t: k.tt }, fuse: k.fuse, points: new Float32Array(fromB64(k.points)), gray: new Uint8Array(fromB64(k.gray)), lc };
       w.keyframes.push(kf);
       if (kf.fuse && w.align) w.fuse(kf);
     }

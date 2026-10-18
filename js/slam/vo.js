@@ -11,12 +11,13 @@ import { buildPyramid, goodFeatures, trackFB } from './klt.js';
 import { rectification, remap } from './rectify.js';
 import { disparityBM, localNormalize } from './dense.js';
 import { angleOf, apply, compose, expSO3, identity, invert, logSO3, refinePose } from './se3.js';
+import { describeView } from './loop.js';
 
 export const VO_DEFAULTS = {
   levels: 3, win: 7, maxFeatures: 220, minDistance: 12,
   kfDistance: 0.25, kfAngleDeg: 8, kfMinInterval: 0.15, kfMaxInterval: 1.0,
   minInliers: 18, maxDisp: 64, minRange: 0.4, maxRange: 6,
-  cloudStride: 3, cloudRange: 4.5, maxSyncPx: 1.0, lostTimeout: 4,
+  cloudStride: 3, cloudRange: 4.5, maxSyncPx: 1.0, lostTimeout: 8,
 };
 
 export class StereoVO {
@@ -59,6 +60,7 @@ export class StereoVO {
     const t0 = now();
     const L = remap(left, w, h, this.rect.mapL), R = remap(right, w, h, this.rect.mapR);
     const pyr = buildPyramid(L, w, h, o.levels);
+    this.last = { L, R, pyr, t };
     const dt = this.lastT == null ? 1 / 15 : Math.max(1e-3, t - this.lastT);
     let keyframe = null, inliers = 0, rmse = 0, shiftPx = 0;
     const timings = { track: 0, depth: 0 };
@@ -231,8 +233,37 @@ export class StereoVO {
         gray.push(L[y * w + x]);
       }
     }
-    this.kf = { id: this.kfCount++, t, pose, points: Float32Array.from(pts), gray: Uint8Array.from(gray), fuse };
+    const lc = describeView(L, w, h, disp, pyr[0], this.intr, this.baseline);
+    this.kf = { id: this.kfCount++, t, pose, points: Float32Array.from(pts), gray: Uint8Array.from(gray), fuse, lc };
     return this.kf;
+  }
+
+  /** Place-recognition description of the newest frame (for relocalising when lost). */
+  describeLast() {
+    const { L, R, pyr } = this.last, w = this.w, h = this.h;
+    const nL = localNormalize(L, w, h), nR = localNormalize(R, w, h);
+    const disp = disparityBM(nL.data, nR.data, w, h, { maxDisp: this.o.maxDisp, texture: nL.std, validL: this.rect.validL, validR: this.rect.validR });
+    return describeView(L, w, h, disp, pyr[0], this.intr, this.baseline);
+  }
+
+  /** Start tracking again from a known pose (found by recognising the place). */
+  relocalize(pose) {
+    const { L, R, pyr, t } = this.last;
+    this.features = [];
+    this.pose = pose;
+    this.vel = { w: [0, 0, 0], v: [0, 0, 0] };
+    const kf = this.makeKeyframe(L, R, pyr, pose, t, true);
+    this.status = 'ok';
+    this.prevPyr = pyr;
+    this.lastT = t;
+    return kf;
+  }
+
+  /** Moves the current pose and map points by a correction (after a loop closure). */
+  shift(C) {
+    this.pose = compose(C, this.pose);
+    for (const f of this.features) f.X = apply(C, f.X);
+    if (this.kf) this.kf.pose = compose(C, this.kf.pose);
   }
 
   result({ keyframe, inliers, rmse = 0, shiftPx = 0, L, timings, t0 }) {

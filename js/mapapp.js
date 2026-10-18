@@ -89,6 +89,8 @@ function onWorker(m) {
     case 'result': onResult(m); break;
     case 'map': onMap(m); break;
     case 'truth': state.truth = m; break;
+    case 'loop': state.loops = m.loops; banner(`Recognised a place you'd been before and corrected the map by ${Math.round(m.correction * 100)} cm.`, 'info'); break;
+    case 'reloc': banner('Found where you are in the map again.', 'info'); break;
     case 'route': state.route = m.route; if (state.nav && m.route?.ok) view3d?.setRoute(m.route.path); drawPlan(); break;
     case 'demoDone': banner('Tour finished. Walk on with the arrow keys (or W A S D), pick a destination on the floor plan, or say "take me back to the start".', 'info'); setDemoButtons('walk'); break;
     case 'saved': downloadBlob(new Blob([m.data], { type: 'application/json' }), `building-map-${stamp()}.json`); break;
@@ -619,7 +621,8 @@ function setChip(id, text, cls = '') {
 
 function refreshChips() {
   const st = state.status;
-  setChip('chipTrack', st === 'ok' ? 'Tracking' : st === 'lost' ? 'Lost: stop and turn slowly' : st === 'init' ? 'Looking for features…' : 'Idle', st === 'ok' ? 'ok' : st === 'lost' ? 'err' : 'busy');
+  const label = { ok: 'Tracking', lost: 'Lost: stop and turn slowly', init: 'Looking for features…', reloc: 'Look around: finding where you are in the loaded map' }[st] ?? 'Idle';
+  setChip('chipTrack', state.loops ? `${label} · ${state.loops} loop${state.loops > 1 ? 's' : ''} closed` : label, st === 'ok' ? 'ok' : st === 'lost' ? 'err' : 'busy');
   const s = state.stats;
   setChip('chipMap', s ? `${s.keyframes} keyframes · ${s.freeArea.toFixed(0)} m² mapped` : 'No map yet');
   setChip('chipFps', state.fps ? `${state.fps.toFixed(0)} fps` : '— fps');
@@ -731,7 +734,7 @@ function wire() {
     const f = e.target.files[0];
     if (!f || !state.worker) return banner('Start the cameras (or the demo) first, then load the map.', 'warn');
     state.worker.postMessage({ type: 'load', data: await f.text() });
-    banner('Map loaded. Positions continue from where that mapping session started, so begin there, facing the same way.', 'info');
+    banner('Map loaded. Look around a spot you mapped; tracking resumes once it recognises where you are.', 'info');
   });
   $('btnGo').addEventListener('click', () => { const d = destinationOf($('destSel').value); if (d) goTo(d); });
   $('btnStopNav').addEventListener('click', () => stopNav());

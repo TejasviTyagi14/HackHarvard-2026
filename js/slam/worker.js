@@ -5,12 +5,14 @@ import { buildRig } from '../geometry.js';
 import { StereoVO } from './vo.js';
 import { World } from './world.js';
 import { GoalPlanner } from './plan.js';
+import { LoopCloser } from './closer.js';
 import { buildingScene, firstHit, poseAt, renderGray, tour, walk } from './building.js';
 import { apply, invert, mulv } from './se3.js';
 
 let cfg = null, vo = null, world = null, mapping = true;
 let goal = null, planner = null, plannedAt = -Infinity, plannedVersion = -1, plannedFrom = null;
 let traj = [], lastTraj = null, demo = null, lastHere = null;
+let closer = null, needReloc = false, lastReloc = 0, loops = 0;
 
 const post = (msg, transfer = []) => self.postMessage(msg, transfer);
 
@@ -19,6 +21,9 @@ function setup(m) {
   const { w, h } = m.size;
   vo = new StereoVO(m.rig, w, h, { maxDisp: Math.round((64 * w) / 320) });
   world = new World(m.world);
+  closer = new LoopCloser(vo.intr);
+  needReloc = false;
+  loops = 0;
   traj = [];
   lastTraj = null;
   planner = null;
@@ -47,8 +52,35 @@ function replan(here, now) {
 
 function process(left, right, t, gap, id, extra = {}) {
   const r = vo.process({ left, right, t, gap });
-  if (r.keyframe && mapping) world.addKeyframe(r.keyframe);
-  const mp = world.mapPose(r.pose);
+  const now0 = performance.now();
+  let loop = null, reloc = false;
+  if ((r.status === 'lost' || needReloc) && world.keyframes.length > 3 && now0 - lastReloc > 500) {
+    // Lost, or a loaded map: find where we are by recognising a stored keyframe.
+    lastReloc = now0;
+    const T = closer.relocalize(world, vo.describeLast(), lastHere && [lastHere.x, 0, lastHere.z]);
+    if (T) {
+      const kf = vo.relocalize(T);
+      if (mapping && !needReloc) world.addKeyframe(kf);
+      needReloc = false;
+      reloc = true;
+      r.status = 'ok';
+      r.keyframe = null;
+    }
+  }
+  if (r.keyframe && mapping && !needReloc) {
+    world.addKeyframe(r.keyframe);
+    loop = closer.check(world);
+    if (loop) {
+      // The whole map just moved: carry the tracker along and redraw the path from the keyframes.
+      vo.shift(loop.C);
+      loops++;
+      traj = world.keyframes.flatMap((k) => world.mapPose(k.pose).t);
+      lastTraj = null;
+      planner = null;
+    }
+  }
+  const mp = world.mapPose(vo.pose);
+  if (needReloc) r.status = 'reloc';
   const here = { x: mp.t[0], z: mp.t[2] };
   if (!lastTraj || Math.hypot(here.x - lastTraj.x, here.z - lastTraj.z) > 0.1) {
     traj.push(mp.t[0], mp.t[1], mp.t[2]);
@@ -61,9 +93,12 @@ function process(left, right, t, gap, id, extra = {}) {
   post({
     type: 'result', id, status: r.status, x: here.x, z: here.z, y: mp.t[1], heading: headingOf(mp.R), pose: mp,
     inliers: r.inliers, rmse: r.rmse, shiftPx: r.shiftPx, keyframe: !!r.keyframe, timings: r.timings,
-    vo: r.stats, features: r.features, image, size: cfg.size, floor: world.floor, route, mapping, ...extra,
+    vo: r.stats, features: r.features, image, size: cfg.size, floor: world.floor, route, mapping, loops, ...extra,
   }, [r.features.buffer, image.buffer]);
-  if (r.keyframe && mapping && world.align) sendMap();
+  if (loop) post({ type: 'loop', correction: loop.correction, loops });
+  if (reloc) post({ type: 'reloc' });
+  if (loop) sendMap(true);
+  else if (r.keyframe && mapping && world.align) sendMap();
   return { r, mp };
 }
 
@@ -217,11 +252,16 @@ const handlers = {
     stopDemo();
     const data = JSON.parse(m.data);
     world = World.deserialize(data);
+    closer = new LoopCloser(vo.intr);
     traj = data.trajectory ?? [];
     lastTraj = null;
     vo.reset();
+    needReloc = true; // until the current view is recognised in the loaded map
     goal = planner = null;
     sendMap(true);
+  },
+  assumeStart() {
+    needReloc = false;
   },
   ply() {
     const buf = world.toPLY();

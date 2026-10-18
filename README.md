@@ -42,6 +42,53 @@ Everything runs the same way, and the table shows the true distance next to each
 - Keep both cameras level with each other. The app learns and corrects a small vertical offset
   (shown under Camera check). Over ~10 px means one camera is tilted on the bar.
 
+## Mapping a building (map.html)
+
+Open **http://localhost:8765/map.html** (or "Map a building" in the header). Carry the rig chest-high,
+pointing where you walk, and press **Start mapping with cameras**. As you walk, a 3D model of the
+building builds up, along with a floor plan of free and blocked space. Then you can get spoken
+directions back to any spot.
+
+How it works (CPU only, following the design brief in `Two webcams live 3D map.txt`):
+
+- **Every frame:** both images are rectified, about 200 corners in the left image are followed
+  with optical flow (KLT), and the camera pose is solved from their known 3D positions. That takes
+  about 3 ms at 320 px on an M4.
+- **Keyframes** (every 25 cm or 8° of movement): dense stereo depth (about 30 ms), fused into a
+  5 cm voxel model (the 3D view) and a 5 cm floor grid of free, blocked and unseen cells.
+  Keyframes wait while the rig turns fast enough that the two unsynced webcams would disagree by
+  more than 1 px.
+- **Up** is found by fitting the floor plane in the first keyframes. Until then, the camera
+  height setting is used.
+- **Drift correction:** each keyframe also stores ~300 BRIEF features. When you come back to a
+  place you mapped, the app recognises it (descriptor matches, 3D RANSAC, then a reprojection
+  check). It then corrects every keyframe through a 4-degree-of-freedom pose graph and rebuilds the
+  map. In the demo, with the field of view entered 5° wrong, this cut the end-of-walk error from
+  13 cm to 3 cm.
+- **Lost tracking** recovers the same way, by recognising a stored keyframe. A loaded map picks
+  up wherever you are, once the current view is recognised.
+- **Directions:** a cost map that keeps routes clear of walls, a Dijkstra field rooted at the
+  goal, and turn-by-turn speech ("In 5 meters, turn left", "Turn left now"). It re-routes if you
+  stray more than 1 m.
+
+Things you can say: "mark this spot as the kitchen", "take me to the kitchen", "take me back to
+the start", "go to the couch" (objects the detector has seen), "where am I", "how much farther",
+"stop navigating", "pause mapping". You can also click the floor plan or the 3D floor to pick a
+destination.
+
+**Demo building:** two rendered rooms joined by a doorway. "Play the tour" walks through them;
+afterwards, or with "Walk with the arrow keys", you drive with ← ↑ → ↓ / W A S D and can follow
+the spoken directions. The faint dot on the floor plan shows your true position, so you can see
+the drift.
+
+**Map file:** Save / Load keeps every keyframe, so a map can be rebuilt and continued. **Export 3D
+model (.ply)** opens in MeshLab, Blender or CloudCompare.
+
+**Limits:** the 3D model is a point cloud, not a surface mesh. Glass and blank walls leave
+holes. Depth beyond about 4 m is too noisy to map. Loop closure only fires when you come back to
+the same view, roughly facing the same way. The real cameras are untested here; everything above
+was verified on the demo building.
+
 ## Talking to it
 
 Press the **mic** (or the **A** key) and ask a question. The answer is read out loud and shown in the
@@ -200,6 +247,11 @@ js/detector.js              COCO-SSD loader
 js/sources.js               cameras, recordings, demo canvases
 js/render.js                drawing the views, map and rig sketch
 js/personcal.js             person calibration: find, match, solve spacing and angle
+map.html, js/mapapp.js      the building mapper page (cameras → worker → 3D view, floor plan, directions)
+js/view3d.js                three.js view of the model, route and places
+js/slam/                    vo (tracking), dense (stereo depth), world (3D + floor grid), loop +
+                            closer + posegraph (drift correction), plan (routes), guide (directions),
+                            navtalk (voice commands), building (demo), worker (runs it all)
 js/assistant.js             answers questions about the scene, with follow-up context
 js/talk.js                  the listen → answer → speak → listen-again loop
 js/speech.js                shared voice, periodic updates, speech recognition, tones
