@@ -27,6 +27,12 @@ export class MapView3D {
     this.controls.enableDamping = true;
     this.controls.target.set(0, 0, -2);
     this.scene.add(new THREE.GridHelper(60, 60, 0x2b3547, 0x161c27));
+    this.scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x1a2030, 1.6));
+    const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+    sun.position.set(4, 10, 3);
+    this.scene.add(sun);
+    this.things = new THREE.Group(); // furniture models for the objects seen
+    this.scene.add(this.things);
 
     // Point cloud with room for 2 million points; drawn up to however many have arrived.
     this.cap = 2_000_000;
@@ -167,6 +173,25 @@ export class MapView3D {
     this.labels.innerHTML = list.map((m) => `<span class="tag3d ${m.kind}">${m.label.replace(/[<&>]/g, '')}</span>`).join('');
   }
 
+  /** Sized furniture models for the objects in the map (see slam/objects.js). */
+  setObjects(list) {
+    this.things.clear();
+    for (const o of list) {
+      const g = furniture(o.cls, o.w, o.h, o.d);
+      g.position.set(o.x, -o.bottom, -o.z); // map (x, y down, z) → three (x, up, −z)
+      g.rotation.y = -o.yaw; // front faces back the way it was seen from
+      this.things.add(g);
+    }
+  }
+
+  setPointsVisible(on) {
+    this.cloud.visible = on;
+  }
+
+  setObjectsVisible(on) {
+    this.things.visible = on;
+  }
+
   setClipHeight(h) {
     this.clip.constant = h;
   }
@@ -195,7 +220,7 @@ export class MapView3D {
     const w = this.container.clientWidth, h = this.container.clientHeight;
     const tags = this.labels.children;
     this.markers.forEach((m, i) => {
-      const v = new THREE.Vector3(m.x, 0.4, -m.z).project(this.camera);
+      const v = new THREE.Vector3(m.x, m.y ?? 0.4, -m.z).project(this.camera);
       const el = tags[i];
       if (!el) return;
       const hidden = v.z > 1 || Math.abs(v.x) > 1.1 || Math.abs(v.y) > 1.1;
@@ -203,4 +228,80 @@ export class MapView3D {
       el.style.transform = `translate(${((v.x + 1) / 2) * w}px, ${((1 - v.y) / 2) * h}px) translate(-50%, -100%)`;
     });
   }
+}
+
+// ---------------------------------------------------------------------------------------
+// Furniture: simple models built from boxes, scaled to the measured width, height and depth.
+// Local frame: base at y = 0, centred, front toward +z.
+
+const unitBox = new THREE.BoxGeometry(1, 1, 1);
+const unitEdges = new THREE.EdgesGeometry(unitBox);
+const edgeMat = new THREE.LineBasicMaterial({ color: 0x0b0e14, transparent: true, opacity: 0.5 });
+const COLORS = {
+  chair: 0xc084fc, couch: 0x34d399, bed: 0x818cf8, 'dining table': 0xd9a066, bench: 0xd9a066, tv: 0x64748b,
+  laptop: 0x94a3b8, 'potted plant': 0x22c55e, refrigerator: 0xe2e8f0, oven: 0xcbd5e1, microwave: 0xcbd5e1,
+  sink: 0xcbd5e1, toilet: 0xf1f5f9, suitcase: 0xf472b6, backpack: 0xf472b6,
+};
+const mats = new Map();
+const matFor = (color) => {
+  if (!mats.has(color)) mats.set(color, new THREE.MeshLambertMaterial({ color }));
+  return mats.get(color);
+};
+
+function furniture(cls, w, h, d) {
+  const g = new THREE.Group();
+  const color = COLORS[cls] ?? 0xc084fc;
+  // A box spanning x0..x1, y0..y1, z0..z1 in fractions of the object's size (x, z centred on 0).
+  const part = (x0, x1, y0, y1, z0, z1, c = color) => {
+    const m = new THREE.Mesh(unitBox, matFor(c));
+    m.scale.set((x1 - x0) * w, (y1 - y0) * h, (z1 - z0) * d);
+    m.position.set(((x0 + x1) / 2) * w, ((y0 + y1) / 2) * h, ((z0 + z1) / 2) * d);
+    const e = new THREE.LineSegments(unitEdges, edgeMat);
+    e.scale.copy(m.scale);
+    e.position.copy(m.position);
+    g.add(m, e);
+  };
+  const legs = (top, t = 0.08) => {
+    for (const x of [-0.5, 0.5 - t]) for (const z of [-0.5, 0.5 - t]) part(x, x + t, 0, top, z, z + t);
+  };
+  const dark = 0x334155;
+  switch (cls) {
+    case 'chair':
+      legs(0.47, 0.1);
+      part(-0.5, 0.5, 0.47, 0.53, -0.5, 0.5); // seat
+      part(-0.5, 0.5, 0.53, 1, -0.5, -0.38); // back
+      break;
+    case 'dining table': case 'bench':
+      legs(0.92, 0.07);
+      part(-0.5, 0.5, 0.92, 1, -0.5, 0.5);
+      break;
+    case 'couch':
+      part(-0.5, 0.5, 0, 0.5, -0.5, 0.5);
+      part(-0.5, 0.5, 0.5, 1, -0.5, -0.25);
+      part(-0.5, -0.38, 0.5, 0.72, -0.25, 0.5);
+      part(0.38, 0.5, 0.5, 0.72, -0.25, 0.5);
+      break;
+    case 'bed':
+      part(-0.5, 0.5, 0, 0.6, -0.5, 0.5);
+      part(-0.5, 0.5, 0.6, 0.72, -0.5, 0.45, 0xe2e8f0); // mattress
+      part(-0.5, 0.5, 0, 1, -0.5, -0.44, dark); // headboard
+      break;
+    case 'tv': case 'laptop':
+      part(-0.5, 0.5, 0.15, 1, -0.5, 0.5, dark);
+      part(-0.46, 0.46, 0.2, 0.95, 0.5, 0.52, 0x0ea5e9); // screen
+      part(-0.15, 0.15, 0, 0.15, -0.5, 0.5, dark);
+      break;
+    case 'potted plant': {
+      const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.3 * w, 0.22 * w, 0.35 * h, 16), matFor(0xb45309));
+      pot.position.y = 0.175 * h;
+      const leaves = new THREE.Mesh(new THREE.IcosahedronGeometry(0.5, 1), matFor(color));
+      leaves.scale.set(w, 0.65 * h, d);
+      leaves.position.y = 0.67 * h;
+      g.add(pot, leaves);
+      break;
+    }
+    default:
+      part(-0.5, 0.5, 0, 1, -0.5, 0.5);
+  }
+  return g;
 }

@@ -9,7 +9,8 @@
 .view-tools { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
 .seg.small button { font-size: 12px; padding: 3px 9px; }
 .clip { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
-.clip input { width: 90px; }
+.clip input[type="range"] { width: 90px; }
+.clip input[type="checkbox"] { width: auto; margin: 0; }
 .view3d {
   position: relative; height: min(72vh, 720px); min-height: 340px;
   border-radius: 8px; overflow: hidden; background: #0b0e14; border: 1px solid var(--line);

@@ -8,6 +8,8 @@
 // Map frame: x right and z forward as at the start, y straight down, floor at y = 0
 // (so height above the floor is −y).
 import { apply, compose, invert, mul3, mulv, rotX } from './se3.js';
+import { ObjectMap } from './objects.js';
+import { yawOf } from './posegraph.js';
 
 export const WORLD_DEFAULTS = {
   cell: 0.05, // floor-grid cell (m)
@@ -21,6 +23,7 @@ export const WORLD_DEFAULTS = {
   floorTol: 0.07, // points this close to the floor count as floor
   alignKeyframes: 4, // keyframes to collect before fitting the floor
   hit: 0.85, miss: -0.4, minLog: -2, maxLog: 3.5, // log-odds for the floor grid
+  minHits: 2, // views a voxel needs before it shows (more = less noise)
 };
 
 const OCC = 0.7, FREE = -0.4;
@@ -47,6 +50,7 @@ export class World {
     this.floor = 'pending'; // 'pending' | 'fitted' | 'assumed'
     this.landmarks = [];
     this.places = [];
+    this.objects = new ObjectMap();
     this.version = 0;
   }
 
@@ -182,7 +186,7 @@ export class World {
     cur.n++;
     cur.g += (g - cur.g) / cur.n;
     // Show a voxel once two observations agree, which drops most stray depth noise.
-    if (cur.n === 2) this.pendingPoints.push(cur);
+    if (cur.n === this.o.minHits) this.pendingPoints.push(cur);
   }
 
   /** New 3D-model points since the last call: { reset, xyz: Float32Array, gray: Uint8Array }. */
@@ -217,9 +221,9 @@ export class World {
   /** Throws everything away except the keyframes, then fuses them all again. */
   rebuild(opts = {}) {
     Object.assign(this.o, opts);
-    const { keyframes, landmarks, places, align, floor } = this;
+    const { keyframes, landmarks, places, align, floor, objects } = this;
     this.reset();
-    Object.assign(this, { landmarks, places, align, floor });
+    Object.assign(this, { landmarks, places, align, floor, objects });
     for (const kf of keyframes) {
       this.keyframes.push(kf);
       if (kf.fuse) this.fuse(kf);
@@ -248,6 +252,13 @@ export class World {
     };
     this.places.forEach(move);
     this.landmarks.forEach(move);
+    for (const o of this.objects.list) {
+      if (!o.anchor) continue;
+      const P = this.mapPose(this.keyframes[o.anchor.k].pose);
+      const p = apply(P, o.anchor.local);
+      o.x = p[0]; o.z = p[2]; o.bottom = p[1] + o.h / 2;
+      o.yaw = yawOf(P.R) + o.anchor.yaw;
+    }
     this.rebuild();
   }
 
@@ -266,9 +277,23 @@ export class World {
     return l;
   }
 
-  /** Landmarks seen at least twice (one-off detections are often wrong). */
+  /** A measured 3D object (see objects.js), tied to the newest keyframe so it moves with corrections. */
+  addObject(box) {
+    const kf = this.keyframes[this.keyframes.length - 1];
+    let anchor = null;
+    if (kf) {
+      const P = this.mapPose(kf.pose);
+      anchor = { k: this.keyframes.length - 1, local: apply(invert(P), [box.x, box.bottom - box.h / 2, box.z]), yaw: box.yaw - yawOf(P.R) };
+    }
+    return this.objects.add(box, anchor);
+  }
+
+  /** Places to navigate to by name: confirmed objects (and older-style landmarks). */
   confirmedLandmarks() {
-    return this.landmarks.filter((l) => l.n >= 2);
+    return [
+      ...this.objects.confirmed().map((o) => ({ id: o.id, cls: o.cls, x: o.x, y: o.bottom - o.h / 2, z: o.z, n: o.n, obj: true })),
+      ...this.landmarks.filter((l) => l.n >= 2),
+    ];
   }
 
   setPlace(name, x, z) {
@@ -299,7 +324,7 @@ export class World {
   serialize(extra = {}) {
     return {
       kind: 'stereo-map', version: 1, saved: new Date().toISOString(), opts: this.o, align: this.align, floor: this.floor,
-      landmarks: this.landmarks, places: this.places, ...extra,
+      landmarks: this.landmarks, places: this.places, objects: this.objects.list, ...extra,
       keyframes: this.keyframes.map((k) => ({
         id: k.id, t: k.t, R: k.pose.R, tt: k.pose.t, fuse: k.fuse, points: toB64(k.points.buffer), gray: toB64(k.gray.buffer),
         lc: k.lc && { uv: toB64(k.lc.uv.buffer), pts3: toB64(k.lc.pts3.buffer), desc: toB64(k.lc.desc.buffer), thumb: toB64(k.lc.thumb.buffer) },
@@ -314,6 +339,7 @@ export class World {
     w.floor = data.floor;
     w.landmarks = data.landmarks ?? [];
     w.places = data.places ?? [];
+    for (const o of data.objects ?? []) { w.objects.list.push(o); w.objects.nextId = Math.max(w.objects.nextId, o.id + 1); }
     for (const k of data.keyframes) {
       const lc = k.lc && { uv: new Float32Array(fromB64(k.lc.uv)), pts3: new Float32Array(fromB64(k.lc.pts3)), desc: new Uint32Array(fromB64(k.lc.desc)), thumb: new Float32Array(fromB64(k.lc.thumb)) };
       const kf = { id: k.id, t: k.t, pose: { R: k.R, t: k.tt }, fuse: k.fuse, points: new Float32Array(fromB64(k.points)), gray: new Uint8Array(fromB64(k.gray)), lc };
@@ -325,7 +351,7 @@ export class World {
 
   /** The 3D model as a binary PLY point cloud (opens in MeshLab, Blender, CloudCompare). */
   toPLY() {
-    const pts = [...this.voxels.values()].filter((v) => v.n >= 2);
+    const pts = [...this.voxels.values()].filter((v) => v.n >= this.o.minHits);
     const header = `ply\nformat binary_little_endian 1.0\ncomment stereo-distance map, metres, y up\nelement vertex ${pts.length}\n`
       + 'property float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nend_header\n';
     const head = new TextEncoder().encode(header);

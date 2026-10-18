@@ -3,9 +3,7 @@
 //   cameras → (grayscale pairs) → worker: tracking + keyframe depth + fusion + planning
 //   worker → this page: pose every frame, map updates on keyframes, the route
 //   this page: 3D view, floor plan, guidance (10×/s), voice.
-import { buildRig, clockHour } from './geometry.js';
-import { measureScene } from './scene.js';
-import { GrayFrame } from './stereo.js';
+import { clockHour } from './geometry.js';
 import { Detector } from './detector.js';
 import { cameraPermission, camerasSupported, ensurePermission, listCameras, openCamera, openRecording, pickDefaultPair } from './sources.js';
 import { Voice, tone } from './speech.js';
@@ -96,6 +94,7 @@ function onWorker(m) {
     case 'align': onAlign(m); break;
     case 'status': state.workerStatus = m.text; refreshChips(); break;
     case 'rotation': onRotation(m); break;
+    case 'seen': onSeen(m); break;
     case 'route': state.route = m.route; if (state.nav && m.route?.ok) view3d?.setRoute(m.route.path); drawPlan(); break;
     case 'demoDone': banner('Tour finished. Walk on with the arrow keys (or W A S D), pick a destination on the floor plan, or say "take me back to the start".', 'info'); setDemoButtons('walk'); break;
     case 'saved': downloadBlob(new Blob([m.data], { type: 'application/json' }), `building-map-${stamp()}.json`); break;
@@ -177,15 +176,18 @@ function onMap(m) {
   state.grid = m.grid;
   state.trajectory = m.trajectory;
   state.landmarks = m.landmarks;
+  state.objects = m.objects ?? [];
   state.places = m.places;
   state.stats = m.stats;
   state.start = { x: m.start[0], z: m.start[2] };
   renderGrid();
   refreshDestinations();
+  view3d?.setObjects(state.objects);
   view3d?.setMarkers([
     { label: 'start', x: state.start.x, z: state.start.z, kind: 'start' },
     ...state.places.map((p) => ({ label: p.name, x: p.x, z: p.z, kind: 'place' })),
-    ...state.landmarks.map((l) => ({ label: spokenName(l.cls), x: l.x, z: l.z, kind: 'landmark' })),
+    ...state.objects.map((o) => ({ label: spokenName(o.cls), x: o.x, z: o.z, y: o.h - o.bottom + 0.12, kind: 'landmark' })),
+    ...state.landmarks.filter((l) => !l.obj).map((l) => ({ label: spokenName(l.cls), x: l.x, z: l.z, kind: 'landmark' })),
   ]);
 }
 
@@ -194,7 +196,8 @@ function resetMapView() {
   view3d?.setTrajectory(new Float32Array(0));
   view3d?.setRoute(null);
   view3d?.setGoal(null);
-  Object.assign(state, { pose: null, route: null, grid: null, places: [], landmarks: [], trajectory: new Float32Array(0), stats: null, truth: null, status: 'init' });
+  view3d?.setObjects([]);
+  Object.assign(state, { pose: null, route: null, grid: null, places: [], landmarks: [], objects: [], trajectory: new Float32Array(0), stats: null, truth: null, status: 'init' });
   stopNav(false);
   renderGrid();
   refreshDestinations();
@@ -334,45 +337,33 @@ async function ensureDetector() {
   }
 }
 
+/** Every 1.5 s, find objects in the left view; the worker sizes and places them using that frame's depth. */
 function maybeDetect(id) {
   if (!settings.landmarks || !detector.ready || state.pendingDetect || performance.now() - state.lastDetect < 1500) return;
   state.lastDetect = performance.now();
-  const frames = state.sources.map((src, i) => {
-    const w = Math.min(640, src.width), h = Math.round((src.height * w) / src.width);
-    if (proc[i].width !== w || proc[i].height !== h) { proc[i].width = w; proc[i].height = h; }
-    src.drawTo(procCtx[i], w, h);
-    return GrayFrame.fromRGBA(procCtx[i].getImageData(0, 0, w, h).data, w, h);
-  });
-  const job = { id, done: false };
-  job.promise = (async () => {
-    const dets = [await detector.detect(proc[0], rigSettings.minScore ?? 0.5), await detector.detect(proc[1], rigSettings.minScore ?? 0.5)];
-    const rig = buildRig(rigSettings, { w: frames[0].w, h: frames[0].h }, { w: frames[1].w, h: frames[1].h });
-    return measureScene(dets[0], dets[1], frames[0], frames[1], rig, { vOffset: rigSettings.vOffset || 0 }).objects;
-  })();
+  const src = state.sources[0];
+  const w = Math.min(640, src.width), h = Math.round((src.height * w) / src.width);
+  if (proc[0].width !== w || proc[0].height !== h) { proc[0].width = w; proc[0].height = h; }
+  src.drawTo(procCtx[0], w, h);
+  const k = state.size.w / w; // detector pixels → the worker's processing size
+  const job = { id };
+  job.promise = detector.detect(proc[0], rigSettings.minScore ?? 0.5)
+    .then((dets) => dets.map((d) => ({ ...d, bbox: d.bbox.map((v) => v * k) })));
   state.pendingDetect = job;
 }
 
 async function finishDetect(job, result) {
   state.pendingDetect = null;
-  const objects = await job.promise.catch(() => []);
-  state.sceneObjects = objects.map((o, i) => ({ ...o, id: i + 1 }));
-  state.sceneAt = performance.now();
-  if (result.status !== 'ok') return;
-  const B = rigSettings.baselineCm / 100;
-  for (const o of objects) {
-    if (!o.point || o.range > settings.rangeMax) continue;
-    // Rig centre → the (rectified) left camera the map tracks, then into the map.
-    const c = [o.point[0] + B / 2, o.point[1], o.point[2]];
-    const p = applyPose(result.pose, c);
-    state.worker.postMessage({ type: 'landmark', cls: o.cls, p });
-  }
+  const dets = await job.promise.catch(() => []);
+  if (result.status !== 'ok' || !dets.length) return;
+  state.worker.postMessage({ type: 'objects', id: job.id, dets });
 }
 
-const applyPose = (P, v) => [
-  P.R[0] * v[0] + P.R[1] * v[1] + P.R[2] * v[2] + P.t[0],
-  P.R[3] * v[0] + P.R[4] * v[1] + P.R[5] * v[2] + P.t[1],
-  P.R[6] * v[0] + P.R[7] * v[1] + P.R[8] * v[2] + P.t[2],
-];
+/** Objects the worker just measured, camera-relative: for "what's in front of me". */
+function onSeen(m) {
+  state.sceneObjects = m.objects.map((o, i) => ({ ...o, id: i + 1, ground: { x: o.point[0], z: o.point[2] }, quality: 'stereo', reason: null }));
+  state.sceneAt = performance.now();
+}
 
 // ---------------------------------------------------------------------------------------
 // Navigation
@@ -643,6 +634,19 @@ function drawPlan() {
     if (label) { ctx.fillStyle = '#e2e8f0'; ctx.fillText(label, a + 7 * dpr, b); }
   };
   pin(state.start.x, state.start.z, '#a3e635', 'start');
+  // Objects as footprints, sized and turned the way they stand.
+  ctx.fillStyle = 'rgba(192,132,252,0.35)';
+  ctx.strokeStyle = '#c084fc';
+  ctx.lineWidth = 1.5 * dpr;
+  for (const o of state.objects ?? []) {
+    const fx = Math.sin(o.yaw), fz = Math.cos(o.yaw);
+    ctx.beginPath();
+    [[1, 1], [1, -1], [-1, -1], [-1, 1]].forEach(([a, b], i) => {
+      const [u, v] = P(o.x + (a * o.w / 2) * fz + (b * o.d / 2) * fx, o.z - (a * o.w / 2) * fx + (b * o.d / 2) * fz);
+      i ? ctx.lineTo(u, v) : ctx.moveTo(u, v);
+    });
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
   for (const l of state.landmarks) pin(l.x, l.z, '#c084fc', spokenName(l.cls));
   for (const p of state.places) pin(p.x, p.z, '#fb923c', p.name);
   if (state.nav) {
@@ -857,6 +861,8 @@ function wire() {
     document.querySelectorAll('[data-view]').forEach((x) => x.classList.toggle('active', x === b));
     view3d?.setMode(b.dataset.view);
   }));
+  $('inShowPoints').addEventListener('change', (e) => view3d?.setPointsVisible(e.target.checked));
+  $('inShowObjects').addEventListener('change', (e) => view3d?.setObjectsVisible(e.target.checked));
   $('inClip').addEventListener('input', (e) => { view3d?.setClipHeight(Number(e.target.value)); $('clipVal').textContent = `${Number(e.target.value).toFixed(1)} m`; });
   $('btnMic').addEventListener('click', () => talk.toggle());
   $('askForm').addEventListener('submit', (e) => { e.preventDefault(); const q = $('askInput').value.trim(); if (q) { $('askInput').value = ''; talk.ask(q); } });

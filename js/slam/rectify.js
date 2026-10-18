@@ -2,7 +2,7 @@
 // points on the same row. Built from the same rig numbers the rest of the app uses (spacing,
 // angle, field of view, and the learned vertical offset). Pure functions, no DOM.
 import { buildRig } from '../geometry.js';
-import { expSO3, logSO3, mulv, tr3 } from './se3.js';
+import { expSO3, logSO3, mulv, rotY, tr3 } from './se3.js';
 
 /**
  * Remap tables for a w × h pair. vOffsetPx = how far the right image sits below the left one at
@@ -36,7 +36,7 @@ export function rectification(params, w, h, vOffsetPx = 0) {
     }
     return m;
   };
-  return { mapL, mapR, validL: valid(mapL), validR: valid(mapR), f, cx, cy, baseline: rig.baseline, w, h };
+  return { mapL, mapR, validL: valid(mapL), validR: valid(mapR), f, cx, cy, baseline: rig.baseline, w, h, toRect: rotY(rig.left.yaw) };
 }
 
 /**
@@ -64,7 +64,13 @@ function rectifyMeasured(Rrel, rig, w, h, vOffsetPx) {
     const x = map[2 * i], y = map[2 * i + 1];
     return x >= 0 && y >= 0 && x <= w - 2 && y <= h - 2 ? 1 : 0;
   });
-  return { mapL, mapR, validL: valid(mapL), validR: valid(mapR), f, cx, cy, baseline: rig.baseline, w, h };
+  return { mapL, mapR, validL: valid(mapL), validR: valid(mapR), f, cx, cy, baseline: rig.baseline, w, h, toRect: half };
+}
+
+/** Where a pixel of the raw left image lands in the rectified image. */
+export function rawToRect(rect, u, v) {
+  const q = mulv(rect.toRect, [(u - rect.cx) / rect.f, (v - rect.cy) / rect.f, 1]);
+  return [rect.cx + (rect.f * q[0]) / q[2], rect.cy + (rect.f * q[1]) / q[2]];
 }
 
 /** Bilinear warp of a grayscale image through a remap table (out-of-range pixels clamp to the edge). */

@@ -7,6 +7,9 @@ import { World } from './world.js';
 import { GoalPlanner } from './plan.js';
 import { LoopCloser } from './closer.js';
 import { estimateRotation } from './loop.js';
+import { measureBox } from './objects.js';
+import { rawToRect, remap } from './rectify.js';
+import { disparityBM, localNormalize } from './dense.js';
 import { buildingScene, firstHit, poseAt, renderGray, tour, walk } from './building.js';
 import { apply, invert, mulv } from './se3.js';
 
@@ -15,13 +18,20 @@ let goal = null, planner = null, plannedAt = -Infinity, plannedVersion = -1, pla
 let traj = [], lastTraj = null, demo = null, lastHere = null;
 let closer = null, needReloc = false, lastReloc = 0, loops = 0;
 let aligned = false, alignTries = 0, rotated = false;
-let mono = false, depthPipe = null;
+let mono = false, depthPipe = null, depthBusy = Promise.resolve();
+const recent = new Map(); // frame id → { left, L, R, pose }, for placing objects detected in it
 
 const TRANSFORMERS = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.1';
 const DEPTH_MODEL = 'onnx-community/metric3d-vit-small';
 
-/** Metric depth (m) for a grayscale frame, from Metric3D v2 running on the GPU (WebGPU). */
-async function estimateDepth(gray, w, h) {
+/** Metric depth (m) for a grayscale frame, from Metric3D v2 running on the GPU (WebGPU). One at a time. */
+function estimateDepth(gray, w, h) {
+  const p = depthBusy.then(() => runDepth(gray, w, h));
+  depthBusy = p.catch(() => {});
+  return p;
+}
+
+async function runDepth(gray, w, h) {
   const tf = await import(TRANSFORMERS);
   if (!depthPipe) {
     post({ type: 'status', text: 'Downloading the depth model (150 MB, first time only)…' });
@@ -59,6 +69,8 @@ function setup(m) {
   closer = new LoopCloser(vo.intr);
   mono = !!m.mono;
   if (mono) vo = new StereoVO(m.rig, w, h, { mono: true });
+  world.o.minHits = mono ? 3 : 2; // model depth is noisier than stereo: want more views per voxel
+  recent.clear();
   needReloc = false;
   loops = 0;
   aligned = !!m.demo;
@@ -93,6 +105,10 @@ function replan(here, now) {
 
 function process(left, right, t, gap, id, extra = {}, depth = null) {
   const r = vo.process({ left, right, t, gap, depth });
+  if (r.status === 'ok') {
+    recent.set(id, { left, L: vo.last.L, R: vo.last.R, pose: { R: vo.pose.R.slice(), t: vo.pose.t.slice() } });
+    if (recent.size > 8) recent.delete(recent.keys().next().value);
+  }
   const now0 = performance.now();
   let loop = null, reloc = false;
   if (!mono && (r.status === 'lost' || needReloc) && world.keyframes.length > 3 && now0 - lastReloc > 500) {
@@ -146,7 +162,7 @@ function process(left, right, t, gap, id, extra = {}, depth = null) {
 
 function sendMap(full = false) {
   if (full) {
-    world.pendingPoints = [...world.voxels.values()].filter((v) => v.n >= 2);
+    world.pendingPoints = [...world.voxels.values()].filter((v) => v.n >= world.o.minHits);
     world.pendingReset = true;
   }
   const pts = world.takePoints();
@@ -156,7 +172,7 @@ function sendMap(full = false) {
   if (grid) transfer.push(grid.data.buffer);
   post({
     type: 'map', ...pts, grid, trajectory, landmarks: world.confirmedLandmarks(), places: world.places,
-    stats: world.stats(), start: world.toMap([0, 0, 0]),
+    stats: world.stats(), start: world.toMap([0, 0, 0]), objects: world.objects.confirmed().map(({ anchor, ...o }) => o),
   }, transfer);
 }
 
@@ -211,12 +227,19 @@ async function demoStep() {
   const { w, h } = cfg.size;
   const L = renderGray(d.rig.left, truth.pose, d.scene, w, h);
   const R = renderGray(d.rig.right, truth.pose, d.scene, w, h);
-  const seen = d.frame % 10 === 0 ? demoSeen(d, truth.pose) : null;
+  const seen = d.frame % 3 === 0 ? demoSeen(d, truth.pose) : null;
   const depth = mono && (vo.needDepth || vo.status === 'init') ? await estimateDepth(L, w, h) : null;
   const { mp } = mono
     ? process(L, L, d.t, 0, `demo-${d.frame}`, { demo: d.kind, seen: seen?.objects ?? null }, depth)
     : process(L, R, d.t, 0, `demo-${d.frame}`, { demo: d.kind, seen: seen?.objects ?? null });
-  if (seen) for (const o of seen.objects) if (o.range < 4) world.addLandmark(o.cls, apply(mp, o.camPoint));
+  // The demo "detects" its furniture perfectly, so place it with its true size.
+  if (seen) {
+    for (const o of seen.objects) {
+      if (o.range > 4) continue;
+      const c = apply(mp, o.camPoint), b = o.box;
+      world.addObject({ cls: o.cls, score: 1, x: c[0], z: c[2], bottom: 0, w: b.max[0] - b.min[0], h: b.max[1] - b.min[1], d: b.max[2] - b.min[2], yaw: 0 });
+    }
+  }
   // How far the map's idea of where you are is from the truth.
   const B = cfg.rig.baselineCm / 100;
   const leftCam = apply(truth.pose, [-B / 2, 0, 0]);
@@ -237,7 +260,7 @@ function demoSeen(d, rigPose) {
     if (b.kind !== 'furniture') continue;
     const c = [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2];
     const p = apply(toCam, c);
-    if (p[2] < 0.3 || Math.abs(p[0] / p[2]) > 0.65 || Math.abs(p[1] / p[2]) > 0.35) continue;
+    if (p[2] < 0.3 || Math.abs(p[0] / p[2]) > 0.75 || Math.abs(p[1] / p[2]) > 0.55) continue;
     // Not hidden behind something else.
     const len = Math.hypot(...p);
     const dir = mulv(camPose.R, p.map((x) => x / len));
@@ -245,7 +268,7 @@ function demoSeen(d, rigPose) {
     if (hit && hit.box !== b) continue;
     // The left camera sits B/2 left of the rig's centre, which is what distances are measured from.
     const rigPoint = [p[0] - B / 2, p[1], p[2]];
-    objects.push({ cls: b.cls, camPoint: p, point: rigPoint, range: Math.hypot(...rigPoint), azimuth: (Math.atan2(rigPoint[0], rigPoint[2]) * 180) / Math.PI });
+    objects.push({ cls: b.cls, box: b, camPoint: p, point: rigPoint, range: Math.hypot(...rigPoint), azimuth: (Math.atan2(rigPoint[0], rigPoint[2]) * 180) / Math.PI });
   }
   return { objects };
 }
@@ -319,6 +342,35 @@ const handlers = {
   },
   landmark(m) {
     world.addLandmark(m.cls, m.p);
+  },
+  /** Detector boxes for a recent frame (raw left-image pixels at the processing size). */
+  async objects(m) {
+    const fr = recent.get(m.id);
+    if (!fr || !m.dets.length || !mapping) return;
+    const { w, h } = cfg.size;
+    let depth;
+    if (mono) {
+      depth = remap(await estimateDepth(fr.left, w, h), w, h, vo.rect.mapL);
+    } else {
+      const nL = localNormalize(fr.L, w, h), nR = localNormalize(fr.R, w, h);
+      const disp = disparityBM(nL.data, nR.data, w, h, { maxDisp: vo.o.maxDisp, texture: nL.std, validL: vo.rect.validL, validR: vo.rect.validR });
+      const fB = vo.intr.f * vo.baseline;
+      depth = disp.map((d) => (d > 0 ? fB / d : -1));
+    }
+    const mp = world.mapPose(fr.pose), toCam = invert(mp);
+    const intr = { ...vo.intr, w, h };
+    const seen = [];
+    for (const det of m.dets) {
+      const [x, y, bw, bh] = det.bbox;
+      const a = rawToRect(vo.rect, x, y), b = rawToRect(vo.rect, x + bw, y + bh);
+      const box = measureBox({ ...det, bbox: [a[0], a[1], b[0] - a[0], b[1] - a[1]] }, depth, intr, mp);
+      if (!box) continue;
+      world.addObject(box);
+      const c = apply(toCam, [box.x, box.bottom - box.h / 2, box.z]); // camera-relative, for "what's in front"
+      seen.push({ cls: box.cls, point: c, range: Math.hypot(...c), azimuth: (Math.atan2(c[0], c[2]) * 180) / Math.PI });
+    }
+    post({ type: 'seen', objects: seen });
+    sendMap();
   },
   place(m) {
     world.setPlace(m.name, m.x, m.z);
