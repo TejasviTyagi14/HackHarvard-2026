@@ -1,3 +1,4 @@
+import { mountPhone } from './phone.js';
 // Controller: video sources → snapshot both frames → detect → stereo-measure → track,
 // then draw the views and the map every animation frame and refresh the side panels.
 import { DEG, bearing, buildRig, clockLabel, fitCalibration, norm, pixelRay, sampleRange, scale, sideLabel } from './geometry.js';
@@ -1275,6 +1276,15 @@ const MIC_ERRORS = {
 
 function onTalkState(st, detail = '') {
   const mic = $('btnMic'), status = $('talkStatus');
+  if (talk.phoneActive) {
+    mic.disabled = true;
+    mic.dataset.state = 'idle';
+    const note = $('talkNote');
+    if (note) note.textContent = 'Phone mode uses your phone microphone and speaker. Laptop microphone recognition is off.';
+    $('talkStatus').textContent = st === 'speaking' ? 'Answering on your phone…' : st === 'thinking' ? 'Working out your answer…' : 'Phone mode is on. Use your phone to talk.';
+    return;
+  }
+  mic.disabled = !talk.supported;
   mic.dataset.state = st;
   mic.setAttribute('aria-label', st === 'listening' ? 'Stop listening' : 'Ask a question');
   status.classList.toggle('err', !!MIC_ERRORS[detail]);
@@ -1410,6 +1420,7 @@ function wire() {
   $('btnRebuildDemo').addEventListener('click', startDemo);
 
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && talk.phoneActive) return talk.phone.hangup();
     if (e.key === 'Escape' && talk.state !== 'idle') return talk.end();
     if (e.target.closest('input, select, textarea')) return;
     if (e.code === 'Space' && !e.target.closest('button') && state.running) {
@@ -1445,6 +1456,7 @@ async function init() {
   talk.followUp = $('inFollowUp').checked = state.settings.talkFollowUp;
   talk.speakAnswers = $('inSpeakAnswers').checked = state.settings.talkSpeak;
   onTalkState('idle');
+  mountPhone({ talk, voice });
   refreshTalkLog();
   requestAnimationFrame(displayLoop);
   processLoop();

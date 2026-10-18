@@ -101,6 +101,26 @@
         <ul class="pins" id="placeList"></ul>
       </section>
 
+      <section class="card phone-panel" id="phonePanel" aria-label="Talk by phone with Photon">
+        <div class="card-head"><h2>Talk by phone</h2><span class="chip">Photon 2.0 · Retell</span></div>
+        <p>Use your phone for the conversation while this page watches the cameras. Keep this page open during the call.</p>
+        <div class="phone-controls">
+          <button id="btnIncoming" class="btn primary" type="button" disabled>Connect incoming call</button>
+          <a id="agentNumber" class="btn" hidden></a>
+        </div>
+        <p id="phoneCode" class="phone-code" hidden></p>
+        <form id="phoneForm" class="phone-form">
+          <label for="phoneNumber">Or get a callback on your phone</label>
+          <div class="phone-controls">
+            <input id="phoneNumber" type="tel" autocomplete="tel" placeholder="+1 617 555 0123" required maxlength="30" aria-describedby="phoneStatus">
+            <button id="btnCall" class="btn" type="submit" disabled>Call my phone</button>
+            <button id="btnHangup" class="btn" type="button" hidden>End call</button>
+          </div>
+        </form>
+        <p id="phoneStatus" class="help" role="status">Checking phone connection…</p>
+        <p class="help">Your Photon SMS number carries the call. Retell handles phone audio and speaks with an AI voice. Camera images stay on this device.</p>
+      </section>
+
       <section class="card talk-mini">
         <div class="talk-left">
           <button type="button" class="mic" id="btnMic" data-state="idle" aria-label="Talk" title="Talk (M)">
