@@ -1,6 +1,6 @@
 """Local web viewer for detectObject: live stereo view, settings, reports.
 
-    .venv/bin/python -m detect_object.webapp            # then open http://127.0.0.1:8765
+    .venv/bin/python -m detect_object.webapp            # then open http://127.0.0.1:8770
     .venv/bin/python -m detect_object.webapp --port 9000 --model yolo11n.pt
 
 Standard library HTTP server only (no extra dependencies). Binds to 127.0.0.1,
@@ -396,7 +396,7 @@ def _src(v):
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="detect_object.webapp")
-    ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--port", type=int, default=8770)
     ap.add_argument("--model", default="yolo11n.pt")
     args = ap.parse_args(argv)
     Handler.viewer = Viewer(args.model)

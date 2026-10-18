@@ -33,7 +33,7 @@ python3 -m venv .venv
 ## Run
 
 ```bash
-./start_viewer.sh                          # web viewer at http://127.0.0.1:8765
+./start_viewer.sh                          # web viewer at http://127.0.0.1:8770
 .venv/bin/python -m detect_object --left 0 --right 2 --detail 0.5
 .venv/bin/python -m pytest tests           # tests (no cameras or network needed)
 ```

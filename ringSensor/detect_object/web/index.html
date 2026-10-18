@@ -195,7 +195,7 @@
        server on this computer, and a browser cannot reach USB cameras on its own. Start it once with:</p>
     <pre style="background:var(--chip);padding:10px 12px;border-radius:6px;overflow:auto">cd ~/Documents/claude-projects/ringSensor
 .venv/bin/python start_viewer.py</pre>
-    <p class="hint">It opens this page by itself at http://127.0.0.1:8765. This page keeps checking and
+    <p class="hint">It opens this page by itself at http://127.0.0.1:8770. This page keeps checking and
        switches over as soon as the server is up.</p>
   </div>
 </div>
@@ -203,7 +203,7 @@
 <script>
 // Opened straight from disk (file://): hand over to the server's copy of this page once it is running.
 if (location.protocol === "file:") {
-  const SERVER = "http://127.0.0.1:8765/";
+  const SERVER = "http://127.0.0.1:8770/";
   document.getElementById("offline").hidden = false;
   const probe = () => fetch(SERVER + "api/state", {mode: "no-cors", cache: "no-store"})
     .then(() => location.replace(SERVER)).catch(() => setTimeout(probe, 1500));
