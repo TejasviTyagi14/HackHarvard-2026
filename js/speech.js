@@ -6,15 +6,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export class Voice {
   get supported() {
-    return 'speechSynthesis' in window;
+    return this.output ? this.output.supported : 'speechSynthesis' in window;
   }
 
   get speaking() {
-    return this.supported && (speechSynthesis.speaking || speechSynthesis.pending);
+    return this.output ? this.output.speaking : this.supported && (speechSynthesis.speaking || speechSynthesis.pending);
   }
 
   cancel() {
-    if (this.supported) speechSynthesis.cancel();
+    if (this.output) this.output.cancel();
+    else if (this.supported) speechSynthesis.cancel();
   }
 
   /**
@@ -22,6 +23,7 @@ export class Voice {
    * when it's done or was interrupted.
    */
   say(text, { interrupt = true, rate = 1.05 } = {}) {
+    if (this.output) return this.output.say(text, { interrupt });
     if (!this.supported || !text) return Promise.resolve();
     if (interrupt) speechSynthesis.cancel();
     const parts = text.split(/(?<=[.!?:;])\s+/).filter(Boolean);

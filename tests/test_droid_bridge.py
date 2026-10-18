@@ -3,6 +3,7 @@
 A fake `droid` stands in for the real one. One live test talks to the real Droid; it runs only
 when FACTORY_API_KEY is set and node is on the PATH.
 """
+import http.client
 import json
 import os
 import shutil
@@ -10,7 +11,9 @@ import stat
 import sys
 import tempfile
 import textwrap
+import threading
 import unittest
+from functools import partial
 from pathlib import Path
 from unittest import mock
 
@@ -113,6 +116,40 @@ class BridgeTest(unittest.TestCase):
                 status, _ = bridge.handle_detail(payload)
                 self.assertEqual(status, 400)
             self.assertFalse(fake.log.exists())
+
+
+class ServingTest(unittest.TestCase):
+    """Only the site's own files, and only to localhost: .env holds the phone secrets."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        for name in ('index.html', 'js/app.js', 'js/slam/worker.js', 'css/style.css', '.env', 'server/index.js'):
+            (self.root / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.root / name).write_text(name)
+        self.server = bridge.ThreadingHTTPServer(('127.0.0.1', 0), partial(bridge.Handler, directory=str(self.root)))
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        shutil.rmtree(self.root)
+
+    def status(self, path, host=None, method='GET'):
+        port = self.server.server_address[1]
+        conn = http.client.HTTPConnection('127.0.0.1', port, timeout=5)
+        conn.request(method, path, body=b'{}' if method == 'POST' else None,
+                     headers={'Host': host or f'localhost:{port}'})
+        status = conn.getresponse().status
+        conn.close()
+        return status
+
+    def test_serves_only_the_site_and_only_to_localhost(self):
+        for path in ('/', '/index.html', '/js/app.js', '/js/slam/worker.js', '/css/style.css', '/js/app.js?v=2'):
+            self.assertEqual(self.status(path), 200, path)
+        for path in ('/.env', '/server/index.js', '/js/../.env', '/js/../server/index.js', '/js/%2e%2e/.env'):
+            self.assertEqual(self.status(path), 404, path)
+        self.assertEqual(self.status('/index.html', host='evil.example'), 403)     # DNS rebinding
+        self.assertEqual(self.status('/api/detail', host='evil.example', method='POST'), 403)
 
 
 @unittest.skipUnless(os.environ.get('FACTORY_API_KEY') and shutil.which('node'), 'needs FACTORY_API_KEY and node')

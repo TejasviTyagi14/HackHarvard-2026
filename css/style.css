@@ -334,3 +334,15 @@ kbd { font: 600 11px var(--font); padding: 1px 5px; border-radius: 4px; border: 
   .app { padding: 12px 16px; }
   .side { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Phone conversation */
+.phone-panel { padding: 16px; margin: 12px 0; }
+.phone-panel > p { font-size: 13px; color: var(--muted); line-height: 1.5; }
+.phone-form > label { display: block; font-size: 12px; margin-bottom: 6px; }
+.phone-controls { display: flex; flex-wrap: wrap; gap: 8px; }
+.phone-controls input { flex: 1; min-width: 160px; }
+.phone-panel[data-state="connected"] { border-color: var(--ok); }
+.phone-panel[data-state="connected"] #phoneStatus { color: var(--ok); }
+
+.phone-form { margin-top: 12px; }
+.phone-panel .phone-code { font-size: 20px; color: var(--accent); font-variant-numeric: tabular-nums; }

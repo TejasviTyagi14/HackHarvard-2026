@@ -155,3 +155,10 @@ test('requests about the amount of detail go to Droid; other questions do not', 
     assert.equal(answer(q, sceneWith()).intent, intent, q);
   }
 });
+
+test('on a phone call a detail request goes to Droid without ending the call', () => {
+  const r = answer('give me more detail', { ...sceneWith(), phone: true });
+  assert.equal(r.intent, 'detail');
+  assert.equal(r.action.end, false);       // js/phone.js turns `end` into hanging up
+  assert.ok(r.action.detail);
+});

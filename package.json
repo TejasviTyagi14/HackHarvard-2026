@@ -4,8 +4,16 @@
   "type": "module",
   "description": "Two webcams in, distances out: a local stereo-vision site.",
   "scripts": {
-    "start": "python3 tools/droid_bridge.py",
-    "start:static": "python3 -m http.server 8765",
-    "test": "node --test"
+    "start": "node --env-file-if-exists=.env server/index.js",
+    "start:droid": "python3 tools/droid_bridge.py",
+    "test": "node --test",
+    "start:static": "python3 -m http.server 8765 --bind 127.0.0.1",
+    "phone:setup": "node --env-file-if-exists=.env server/phone-setup.js"
+  },
+  "dependencies": {
+    "ws": "8.22.0"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

@@ -68,10 +68,10 @@ request text ──► DetailController.handleRequest(text)          js/detail.j
 1. Install Droid (`curl -fsSL https://app.factory.ai/cli | sh`) and create an API key at
    https://app.factory.ai/settings/api-keys.
 2. `export FACTORY_API_KEY=fk-...`
-3. Run `npm start` (or `python3 tools/droid_bridge.py`) instead of `python3 -m http.server 8765`. It
-   serves the same site on the same port and adds `/api/detail`. `npm run start:static` still runs the
-   plain server; without the bridge, detail requests get "I couldn't change how much I say right now."
-   and everything else works as before.
+3. Run `npm run start:droid` (or `python3 tools/droid_bridge.py`) instead of `npm start`. It serves
+   the same site on port 8765 and adds `/api/detail`, but not phone calling, which needs `npm start`
+   (the Node server on port 8766). Without the bridge, detail requests get "I couldn't change how
+   much I say right now." and everything else works as before.
 
 Optional environment variables:
 

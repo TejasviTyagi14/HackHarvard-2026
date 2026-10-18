@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Serves the site like `python3 -m http.server`, plus one endpoint that lets Droid (Factory's
-agent) set the assistant's level of detail.
+"""Serves the site (its public files only, as server/index.js does), plus one endpoint that lets
+Droid (Factory's agent) set the assistant's level of detail.
 
     POST /api/detail  {"request": "...", "current": {...}, "schema": {...}}
                    -> {"update": {"preset", "set", "reply"}, "droid": {...}}  or  {"error": "..."}
@@ -19,12 +19,14 @@ DROID_REASONING (optional reasoning effort), DROID_TIMEOUT seconds (default 40).
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent.parent
 PROMPT_FILE = Path(__file__).resolve().parent / 'detail_prompt.md'
@@ -32,6 +34,9 @@ MAX_REQUEST_CHARS = 500
 MAX_BODY_BYTES = 64 * 1024
 # Keep these requests out of Factory's cloud session list.
 RUNTIME_SETTINGS = {'cloudSessionSync': False}
+# The same public files as server/index.js: never .env (the phone secrets), .git, tools or tests.
+PUBLIC_PATH = re.compile(r'^/(?:index\.html|map\.html|(?:js|css)/[\w./-]+\.(?:js|css))?$')
+LOOPBACK_HOST = re.compile(r'^(?:localhost|127\.0\.0\.1)(?::\d+)?$')
 
 
 class DroidError(Exception):
@@ -127,7 +132,28 @@ def handle_detail(payload):
 
 
 class Handler(SimpleHTTPRequestHandler):
+    def allowed(self):
+        """Loopback Host only, so no website reaches this by DNS rebinding; GET only public files."""
+        path = urlsplit(self.path).path
+        if not LOOPBACK_HOST.match(self.headers.get('Host', '')):
+            self.send_error(403)
+        elif self.command in ('GET', 'HEAD') and (not PUBLIC_PATH.match(path) or '..' in path):
+            self.send_error(404)
+        else:
+            return True
+        return False
+
+    def do_GET(self):
+        if self.allowed():
+            super().do_GET()
+
+    def do_HEAD(self):
+        if self.allowed():
+            super().do_HEAD()
+
     def do_POST(self):
+        if not self.allowed():
+            return
         if self.path != '/api/detail':
             return self.send_error(404)
         length = int(self.headers.get('Content-Length') or 0)

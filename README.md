@@ -14,22 +14,49 @@ spot you click. Calibration is one step: have someone stand 2 m away and press C
 with its distance and direction, then keeps listening for follow-ups like "how far is it?". You enter the spacing between the cameras and the angle between them. A quick
 tape-measure calibration then fine-tunes the angle and the field of view.
 
-Everything runs in the browser on your Mac. The only download is the object detector
-(TensorFlow.js COCO-SSD), fetched from a CDN the first time.
+Camera processing and answers run in the browser on your Mac. The object detector
+(TensorFlow.js COCO-SSD) loads from a CDN. Optional phone conversations use a local Node server,
+a Photon 2.0 SMS number, and Retell for transcription, turn-taking, and speech.
 
 ## Run it
 
+Requires **Node.js 22 or newer**.
+
 ```bash
-cd ~/Documents/Claude/stereo-distance
-python3 -m http.server 8765
+npm install
+npm start
 ```
 
-Then open **http://localhost:8765** in Chrome and press **Start cameras**. The camera only works
+Then open **http://localhost:8766** in Chrome and press **Start cameras**. The camera only works
 over `localhost`, not by opening the HTML file directly. If Chrome never asks for the camera,
 check System Settings → Privacy & Security → Camera → Google Chrome.
 
 No cameras handy? Press **Demo room**: a rendered room with five boxes at known distances.
 Everything runs the same way, and the table shows the true distance next to each measurement.
+
+## Phone calls with Photon 2.0
+
+The **Talk by phone** panel is available on both Measure and Map a building.
+
+- **Connect incoming call:** call the displayed Photon number, then read the six-digit pairing
+  code from the camera page. Only a paired call can ask about this page's measurements.
+- **Call my phone:** enter your number with its country code. Answer the callback from the
+  Photon number; it is already paired to this page.
+- Keep the camera page open. Questions, follow-ups, calibration, and map commands use the same
+  live app logic as typed questions. Laptop microphone recognition is disabled in phone mode,
+  and spoken answers, calibration announcements, and navigation guidance go to the phone.
+- Say **goodbye**, press **End call**, or press **Esc** to end a connected call. Closing the
+  camera page also ends its call. Calls are limited to 20 minutes.
+
+**Setup is required before real calls:** [Photon 2.0 + Retell setup](docs/phone-setup.md).
+This uses the hackathon's **SMS number → Photon SIP Voice profile → Retell Custom LLM agent**
+path, for both inbound and outbound calls. It does not use the legacy Photon Voice gRPC SDK.
+No OpenAI key is required by this app; Retell supplies the speech services.
+
+Copy `.env.example` to `.env`, complete the account setup in the guide, and restart `npm start`.
+The page explains when phone configuration is missing. The rest of the app still works without it.
+The old browser-only server is available as `npm run start:static` on port 8765; phone features
+require `npm start`.
 
 ## Before you start: mounting
 
@@ -82,9 +109,9 @@ mobility aid.
 How many objects it lists, whether it adds directions and reasons, and how finely it rounds
 distances are parameters that Droid (Factory's agent) sets while the app runs. Say or type "more
 detail", "keep it short", "just the basics" or "stop saying the o'clock", and Droid picks the new
-settings. To use it, set `FACTORY_API_KEY` and run the site with `npm start`
-(`python3 tools/droid_bridge.py`) instead of `python3 -m http.server 8765`. Without the bridge,
-the assistant keeps its usual level of detail.
+settings. To use it, set `FACTORY_API_KEY` and run the site with `npm run start:droid`
+(`python3 tools/droid_bridge.py`, http://localhost:8765) instead of `npm start`. That server has
+no phone calling yet. Without the bridge, the assistant keeps its usual level of detail.
 See [docs/DROID_DETAIL.md](docs/DROID_DETAIL.md).
 
 ## The phases, and the check for each one on the real cameras

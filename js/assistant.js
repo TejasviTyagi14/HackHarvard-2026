@@ -625,8 +625,9 @@ function route(t, scene, ctx) {
     return { intent: 'calibrate', text: '', action: { calibrate: 'capture', range, end: true } };
   }
   if (DETAIL.test(t)) {
-    // The page hands the request to Droid and says its answer when it arrives.
-    return { intent: 'detail', text: 'One moment.', action: { detail: t, end: true } };
+    // The page hands the request to Droid and says its answer when it arrives; `end` keeps the
+    // mic closed until then. On a phone call `end` would hang up, so there the call goes on.
+    return { intent: 'detail', text: 'One moment.', action: { detail: t, end: !scene.phone } };
   }
   const upd = updatesIntent(t);
   if (upd != null) {
@@ -659,7 +660,7 @@ function route(t, scene, ctx) {
 /**
  * Answers one question.
  * scene: { objects, pins, units, status ('ok' | 'no-video' | 'loading' | 'detector-off' | 'detector-error'), paused, hfovDeg,
- *   detail (level-of-detail parameters, see detail.js; defaults when missing) }
+ *   detail (level-of-detail parameters, see detail.js; defaults when missing), phone (true during a phone call) }
  * ctx: the `ctx` returned by the previous answer (or {} to start a conversation).
  * Returns { question, intent, text, action, focus (object id to highlight or null), ctx }.
  */
