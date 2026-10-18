@@ -8,7 +8,9 @@ import { GoalPlanner } from './plan.js';
 import { LoopCloser } from './closer.js';
 import { estimateRotation } from './loop.js';
 import { measureBox } from './objects.js';
-import { extractWalls, squareUp } from './walls.js';
+import { extractWalls, squareUp, WallMap } from './walls.js';
+import { buildSurfaces } from './surfaces.js';
+import { DriftTracker, combine, floorCovariance } from './uncertainty.js';
 import { rawToRect, remap } from './rectify.js';
 import { disparityBM, localNormalize } from './dense.js';
 import { buildingScene, firstHit, poseAt, renderGray, tour, walk } from './building.js';
@@ -22,6 +24,8 @@ let aligned = false, alignTries = 0, rotated = false;
 let mono = false, depthPipe = null, depthBusy = Promise.resolve();
 const recent = new Map(); // frame id → { left, L, R, pose }, for placing objects detected in it
 let walls = [], lastWalls = 0, levels = 0, wallAxis = null;
+const wallMap = new WallMap(), drift = new DriftTracker();
+let lastFrame = null; // { at, x, z, heading } of the previous frame, for how far the map's idea of you can drift
 
 const TRANSFORMERS = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.1';
 const DEPTH_MODEL = 'onnx-community/metric3d-vit-small';
@@ -75,6 +79,9 @@ function setup(m) {
   if (mono) vo = new StereoVO(m.rig, w, h, { mono: true, maxRange: 15, cloudRange, turnFrom }); // the depth model sees far
   walls = [];
   wallAxis = null;
+  wallMap.clear();
+  drift.reset();
+  lastFrame = null;
   lastWalls = levels = 0;
   world.o.minHits = mono ? 3 : 2; // model depth is noisier than stereo: want more views per voxel
   recent.clear();
@@ -155,19 +162,34 @@ function process(left, right, t, gap, id, extra = {}, depth = null) {
   const now = performance.now();
   if (r.status === 'ok') lastHere = here;
   const route = r.status === 'ok' ? replan(here, now) : null;
+  const unc = uncertainty(r, mp, here, now, !!(loop || reloc || relevel));
   const image = new Uint8ClampedArray(r.image);
   const imageR = new Uint8ClampedArray(vo.last.R);
   post({
     type: 'result', id, status: r.status, x: here.x, z: here.z, y: mp.t[1], heading: headingOf(mp.R), pose: mp,
     inliers: r.inliers, rmse: r.rmse, shiftPx: r.shiftPx, keyframe: !!r.keyframe, timings: r.timings,
     vo: r.stats, features: r.features, image, imageR, size: cfg.size, floor: world.floor, route, mapping, loops, depthInfo: r.depthInfo,
-    compass: r.compass && { heading: r.compass.heading, pitch: r.compass.pitch, roll: r.compass.roll, ok: r.compass.ok }, ...extra,
+    compass: r.compass && { heading: r.compass.heading, pitch: r.compass.pitch, roll: r.compass.roll, ok: r.compass.ok, quality: r.compass.quality }, unc, ...extra,
   }, [r.features.buffer, image.buffer, imageR.buffer]);
   if (loop) post({ type: 'loop', correction: loop.correction, loops });
   if (reloc) post({ type: 'reloc' });
   if (loop || relevel) sendMap(true);
   else if (r.keyframe && mapping && world.align) sendMap();
   return { r, mp };
+}
+
+/** How sure we are of where the camera is: this frame's solve plus the drift built up since the last anchor. */
+function uncertainty(r, mp, here, now, jumped) {
+  const heading = headingOf(mp.R), compassOk = !!r.compass?.ok;
+  const dt = lastFrame ? Math.min(1, (now - lastFrame.at) / 1000) : 0;
+  // A loop closure or re-level moves the map under you; that jump isn't walking.
+  const moved = lastFrame && !jumped ? Math.hypot(here.x - lastFrame.x, here.z - lastFrame.z) : 0;
+  const turned = lastFrame && !jumped ? Math.abs(Math.atan2(Math.sin(heading - lastFrame.heading), Math.cos(heading - lastFrame.heading))) : 0;
+  drift.step({ dt, moved, turned, status: r.status, compassOk });
+  if (jumped && r.status === 'ok') drift.loopClosed();
+  lastFrame = { at: now, x: here.x, z: here.z, heading };
+  const fc = r.uncertainty ? floorCovariance(r.uncertainty, (world.align ?? world.assumedAlign()).R) : null;
+  return combine(fc, drift, { status: r.status, compassOk });
 }
 
 /** After the map moved (re-levelled): the path walked comes from the keyframes again. */
@@ -180,9 +202,20 @@ function redrawPath() {
 
 function sendMap(full = false) {
   const now = performance.now();
+  let clean = null, slabs = null;
   if (full || now - lastWalls > 2000) {
     lastWalls = now;
-    ({ walls, axis: wallAxis } = squareUp(extractWalls(world.voxels.values(), { minHits: world.o.minHits, exclude: world.objects.lasting() }), wallAxis));
+    // Walls build up over time; when the whole map has moved they start again from this look.
+    if (full) wallMap.clear();
+    const found = squareUp(extractWalls(world.voxels.values(), { minHits: world.o.minHits, exclude: world.objects.lasting() }), wallAxis);
+    wallAxis = found.axis;
+    const isFree = (x, z) => { const k = world.cellIndex(x, z); return k >= 0 && world.cellState(k) === 0; };
+    wallMap.update(found.walls, wallAxis, { isFree });
+    walls = wallMap.list();
+    // Floor, walls, objects and flat tops are drawn as surfaces; only what's left is sent as dots.
+    ({ clean, slabs } = buildSurfaces(world.voxels.values(), {
+      minHits: world.o.minHits, voxel: world.o.voxel, walls, objects: world.objects.confirmed(), axis: wallAxis ?? 0,
+    }));
   }
   if (full) {
     world.pendingPoints = [...world.voxels.values()].filter((v) => v.n >= world.o.minHits);
@@ -193,9 +226,10 @@ function sendMap(full = false) {
   const trajectory = Float32Array.from(traj);
   const transfer = [pts.xyz.buffer, pts.gray.buffer, trajectory.buffer];
   if (grid) transfer.push(grid.data.buffer);
+  if (clean) transfer.push(clean.xyz.buffer, clean.gray.buffer);
   post({
     type: 'map', ...pts, grid, trajectory, landmarks: world.confirmedLandmarks(), places: world.places,
-    stats: world.stats(), start: world.toMap([0, 0, 0]), objects: world.objects.confirmed().map(({ anchor, ...o }) => o), walls,
+    stats: world.stats(), start: world.toMap([0, 0, 0]), objects: world.objects.confirmed().map(({ anchor, ...o }) => o), walls, clean, slabs, axis: wallAxis,
   }, transfer);
 }
 
@@ -412,6 +446,11 @@ const handlers = {
     stopDemo();
     vo.reset();
     world.reset();
+    walls = [];
+    wallAxis = null;
+    wallMap.clear();
+    drift.reset();
+    lastFrame = null;
     traj = [];
     lastTraj = null;
     goal = planner = null;
@@ -432,6 +471,9 @@ const handlers = {
     const data = JSON.parse(m.data);
     world = World.deserialize(data);
     closer = new LoopCloser(vo.intr);
+    wallAxis = null;
+    drift.reset();
+    lastFrame = null;
     traj = data.trajectory ?? [];
     lastTraj = null;
     vo.reset();

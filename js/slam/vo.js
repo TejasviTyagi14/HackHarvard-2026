@@ -16,6 +16,7 @@ import { disparityBM, localNormalize } from './dense.js';
 import { angleOf, apply, compose, expSO3, identity, invert, logSO3, refinePose, tr3 } from './se3.js';
 import { describeView } from './loop.js';
 import { VisualCompass } from './compass.js';
+import { poseCovariance } from './uncertainty.js';
 import { GrayFrame, bandSearch } from '../stereo.js';
 
 export const VO_DEFAULTS = {
@@ -25,6 +26,8 @@ export const VO_DEFAULTS = {
   cloudStride: 3, cloudRange: 4.5, maxSyncPx: 1.0, lostTimeout: 8,
   turnFrom: 'compass', // 'compass' (whole image) or 'points' (the tracked features)
   compassWeight: 15, // the compass counts as much as this many tracked points for the turn
+  edgeFilter: null, // drop cloud samples on depth edges; null = on with one camera, off with two
+  edgeJump: 0.08, // …where the depth jumps by more than this (relative) to a neighbour
 };
 
 export class StereoVO {
@@ -127,7 +130,7 @@ export class StereoVO {
       });
       return { X, uv };
     };
-    let poseCw = null, keep = [];
+    let poseCw = null, keep = [], fit = null;
     if (useCompass && idx.length >= o.minInliers) {
       // One solve with both: the whole picture's shift (mostly the turn) and the tracked points
       // (mostly how far you've walked). A small step sideways looks much like a small turn, so
@@ -143,6 +146,7 @@ export class StereoVO {
         if (keep.length >= o.minInliers) {
           poseCw = r2.pose;
           rmse = r2.rmse;
+          fit = r2;
           this.compass.adopt(tr3(poseCw.R));
           this.heading = comp = this.compass.reading();
         }
@@ -161,6 +165,7 @@ export class StereoVO {
         if (keep.length >= o.minInliers) {
           poseCw = r2.pose;
           rmse = r2.rmse;
+          fit = r2;
           // The points disagreed with the compass (or it couldn't see): it carries on from them.
           if (o.turnFrom === 'compass') {
             this.compass.resync(invert(poseCw).R);
@@ -195,6 +200,9 @@ export class StereoVO {
     }
 
     inliers = keep.length;
+    // How sure this fit is (camera position and turn, world frame), for the halo round the camera.
+    // (refinePose's rmse is over the points within 3 px.)
+    const uncertainty = poseCovariance(fit.info, fit.rmse, poseCw.R, { n: fit.err.filter((e) => e < 3).length });
     this.features = keep.map((k) => ({ ...this.features[k], u: tr.pts[2 * k], v: tr.pts[2 * k + 1] }));
     const newPose = invert(poseCw);
     if (!lost) {
@@ -231,7 +239,7 @@ export class StereoVO {
     }
     this.prevPyr = pyr;
     this.lastT = t;
-    return this.result({ keyframe, inliers, rmse, shiftPx, L, timings, t0 });
+    return this.result({ keyframe, inliers, rmse, shiftPx, L, timings, t0, uncertainty });
   }
 
   /** Dense depth for this pair, new features where there are none, and the keyframe's cloud. */
@@ -308,13 +316,23 @@ export class StereoVO {
       }
     }
     // The keyframe's point cloud (camera frame) for the map.
+    // A depth model smooths over the edge between something near and what's behind it, leaving a
+    // streak of points in mid-air along the line of sight. So with one camera, a sample whose depth
+    // differs by more than edgeJump from a neighbour one stride away is dropped. A stride away, not
+    // the next pixel: a model smears an edge over several pixels, too gently per pixel to catch.
+    // A flat floor or wall only changes that fast when seen more than ~80° from face-on (at 320 px
+    // wide), and there the model's depth is no good anyway.
+    const s = o.cloudStride, edges = o.edgeFilter ?? !!o.mono, jump = 1 + o.edgeJump;
+    const steep = (i, d) => disp[i] > 0 && (disp[i] > d ? disp[i] / d : d / disp[i]) > jump;
     const pts = [], gray = [];
-    for (let y = 2; y < h - 2; y += o.cloudStride) {
-      for (let x = 2; x < w - 2; x += o.cloudStride) {
-        const d = disp[y * w + x];
+    for (let y = 2; y < h - 2; y += s) {
+      for (let x = 2; x < w - 2; x += s) {
+        const i = y * w + x, d = disp[i];
         if (d <= 0) continue;
         const Z = fB / d;
         if (Z < o.minRange || Z > o.cloudRange) continue;
+        if (edges && ((x >= s && steep(i - s, d)) || (x + s < w && steep(i + s, d))
+          || (y >= s && steep(i - s * w, d)) || (y + s < h && steep(i + s * w, d)))) continue;
         pts.push(((x - cx) * Z) / f, ((y - cy) * Z) / f, Z);
         gray.push(L[y * w + x]);
       }
@@ -385,12 +403,13 @@ export class StereoVO {
     if (this.kf) this.kf.pose = compose(C, this.kf.pose);
   }
 
-  result({ keyframe, inliers, rmse = 0, shiftPx = 0, L, timings, t0 }) {
+  result({ keyframe, inliers, rmse = 0, shiftPx = 0, L, timings, t0, uncertainty = null }) {
     const features = new Float32Array(this.features.length * 2);
     this.features.forEach((f, i) => { features[2 * i] = f.u; features[2 * i + 1] = f.v; });
     return {
       status: this.status, pose: this.pose, inliers, rmse, shiftPx, keyframe, features,
       image: L, timings: { ...timings, total: now() - t0 }, stats: this.stats, compass: this.heading ?? null, depthInfo: this.depthInfo ?? null, needDepth: !!this.needDepth,
+      uncertainty, // { pos, rot } (m², rad², world frame) from this frame's solve; null without one
     };
   }
 }

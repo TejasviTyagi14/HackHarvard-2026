@@ -13,21 +13,30 @@
 .clip input[type="checkbox"] { width: auto; margin: 0; }
 .view3d {
   position: relative; height: min(72vh, 720px); min-height: 340px;
-  border-radius: 8px; overflow: hidden; background: #0b0e14; border: 1px solid var(--line);
+  border-radius: 8px; overflow: hidden; background: #0f1218; border: 1px solid var(--line);
 }
+.view3d.light { background: #e7eaee; }
 .view3d canvas { display: block; width: 100%; height: 100%; cursor: grab; }
 .view3d canvas:active { cursor: grabbing; }
 .view3d .placeholder { z-index: 2; }
 .pad { padding: 20px; }
 .labels3d { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+/* Text tags over the 3D view: quiet pills, with a small dot in the floor plan's colour for the kind. */
 .tag3d {
-  position: absolute; left: 0; top: 0; white-space: nowrap;
-  font-size: 11.5px; font-weight: 600; padding: 2px 7px; border-radius: 5px;
-  background: rgba(11, 14, 20, 0.82); border: 1px solid var(--line-2); color: var(--text);
+  position: absolute; left: 0; top: 0; white-space: nowrap; display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.01em; padding: 2px 8px 2px 6px; border-radius: 999px;
+  background: rgba(15, 18, 24, 0.7); border: 1px solid rgba(255, 255, 255, 0.07); color: #dfe5ec;
+  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
 }
-.tag3d.place { border-color: rgba(251, 146, 60, 0.7); color: #fed7aa; }
-.tag3d.landmark { border-color: rgba(192, 132, 252, 0.6); color: #e9d5ff; }
-.tag3d.start { border-color: rgba(163, 230, 53, 0.6); color: #d9f99d; }
+.tag3d::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #8b95a5; }
+.tag3d.place::before { background: #fb923c; }
+.tag3d.landmark { color: #b9c1cc; font-weight: 500; }
+.tag3d.start::before { background: #a3e635; }
+.view3d.light .tag3d { background: rgba(255, 255, 255, 0.82); border-color: rgba(15, 23, 42, 0.08); color: #1f2937; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08); }
+.view3d.light .tag3d.landmark { color: #4b5563; }
+.view3d.light .tag3d::before { background: #8f9aa8; }
+.view3d.light .tag3d.place::before { background: #f97316; }
+.view3d.light .tag3d.start::before { background: #65a30d; }
 
 .campair { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .campair figure { margin: 0; min-width: 0; }
@@ -73,12 +82,22 @@
 }
 
 /* Visual compass over the 3D view */
-.compass { position: absolute; top: 10px; left: 10px; display: flex; align-items: center; gap: 8px; padding: 6px 10px 6px 6px; border-radius: 10px; background: rgba(11, 14, 20, 0.72); border: 1px solid var(--line, #263042); z-index: 2; pointer-events: none; }
-.compass svg { width: 52px; height: 52px; }
-.compass .ring { fill: none; stroke: #475569; stroke-width: 2; }
-.compass .n { fill: #94a3b8; font: 600 8px system-ui; text-anchor: middle; dominant-baseline: middle; }
-.compass .needle { fill: #38bdf8; }
+.compass {
+  position: absolute; top: 10px; left: 10px; display: flex; align-items: center; gap: 8px; padding: 5px 12px 5px 5px;
+  border-radius: 12px; background: rgba(15, 18, 24, 0.66); border: 1px solid rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); z-index: 2; pointer-events: none;
+}
+.compass svg { width: 48px; height: 48px; }
+.compass .ring { fill: none; stroke: #3a4352; stroke-width: 1.5; }
+.compass .n { fill: #7d8796; font: 600 7.5px system-ui; text-anchor: middle; dominant-baseline: middle; }
+.compass .needle { fill: #3b82f6; transition: fill 0.3s; }
 .compass div { display: flex; flex-direction: column; line-height: 1.2; }
-.compass b { font-size: 16px; color: #e2e8f0; font-variant-numeric: tabular-nums; }
-.compass span { font-size: 11px; color: #94a3b8; }
-.compass.dim .needle { fill: #64748b; }
+.compass b { font-size: 15px; font-weight: 600; color: #e6e9ef; font-variant-numeric: tabular-nums; }
+.compass span { font-size: 11px; color: #8b95a5; }
+.compass.dim .needle { fill: #5c6679; }
+.view3d.light .compass { background: rgba(255, 255, 255, 0.8); border-color: rgba(15, 23, 42, 0.08); box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08); }
+.view3d.light .compass .ring { stroke: #c4cad3; }
+.view3d.light .compass .n, .view3d.light .compass span { fill: #6b7685; color: #6b7685; }
+.view3d.light .compass .needle { fill: #2563eb; }
+.view3d.light .compass.dim .needle { fill: #a3acb8; }
+.view3d.light .compass b { color: #1f2937; }

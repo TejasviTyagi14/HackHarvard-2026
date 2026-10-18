@@ -18,6 +18,8 @@ const $ = (id) => document.getElementById(id);
 const MEASURE_KEY = 'stereo-distance:v1';
 const MAP_KEY = 'stereo-map:v1';
 const MAP_DEFAULTS = { turnFrom: 'compass', cameras: 'two', camHeight: 1.3, bodyHeight: 1.9, stepHeight: 0.1, rangeMax: 10, quality: 'fast', landmarks: true, fps60: true };
+const VIEW_KEY = 'stereo-map:view'; // how the 3D model is shown: colours, what's on, camera
+const VIEW_DEFAULTS = { theme: 'dark', allDots: false, objects: true, walls: true, clip: 2.2, mode: 'follow' };
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -31,6 +33,7 @@ function save(key, value) {
 // The measuring page owns the rig numbers and camera choice; this page reads them.
 const rigSettings = load(MEASURE_KEY, { baselineCm: 12, angleDeg: 0, hfovDeg: 70, angleSplit: 'even', vOffset: 0, resolution: '1280x720', deviceIds: [null, null], units: 'm', tiltDeg: 0, talkFollowUp: true, talkSpeak: true, minScore: 0.5, model: 'lite_mobilenet_v2' });
 const settings = load(MAP_KEY, MAP_DEFAULTS);
+const viewSettings = load(VIEW_KEY, VIEW_DEFAULTS);
 if (!settings.rangeV) { settings.rangeMax = Math.max(settings.rangeMax, 10); settings.rangeV = 2; } // the old default was 4 m
 
 const state = {
@@ -155,19 +158,30 @@ function onResult(m) {
   state.shiftPx = m.shiftPx;
   state.inliers = m.inliers;
   state.depthInfo = m.depthInfo;
-  if (m.status !== 'init') state.pose = { x: m.x, y: m.y, z: m.z, heading: m.heading, R: m.pose.R };
+  if (m.status !== 'init') state.pose = { x: m.x, y: m.y, z: m.z, heading: m.heading, R: m.pose?.R, status: m.status };
+  state.unc = m.unc; // { cxx, cxz, czz, yawSd, level }; missing from older workers
   if (m.compass) drawCompass(m.compass);
   if (m.seen) {
     state.sceneObjects = m.seen.map((o, i) => ({ ...o, id: i + 1, ground: { x: o.point[0], z: o.point[2] }, quality: 'stereo', reason: null }));
     state.sceneAt = now;
   }
   drawCamera(m);
+  if (view3d && m.size) cameraModel(m.size);
   if (view3d && state.pose) {
     view3d.setPose(state.pose);
+    view3d.setUncertainty(m.unc);
     view3d.setRoute(state.nav && m.route?.ok ? m.route.path : null);
   }
   if (state.pendingDetect && state.pendingDetect.id === m.id) finishDetect(state.pendingDetect, m);
   refreshChips();
+}
+
+/** The 3D view's frustum follows the camera's field of view and the processing image's shape. */
+function cameraModel(size) {
+  const key = `${rigSettings.hfovDeg}:${size.w}x${size.h}`;
+  if (key === state.camModel) return;
+  state.camModel = key;
+  view3d.setCameraModel({ hfovDeg: rigSettings.hfovDeg, aspect: size.w / size.h });
 }
 
 function onMap(m) {
@@ -175,6 +189,11 @@ function onMap(m) {
     if (m.reset) view3d.resetPoints();
     view3d.addPoints(m.xyz, m.gray);
     view3d.setTrajectory(m.trajectory);
+    if (m.grid) view3d.setGrid(m.grid);
+    // Leftover points and flat tops come only when they changed (null = keep what's shown). The
+    // leftover buffers may be transferred, so the view copies them and nothing here keeps them.
+    if (m.clean) view3d.setCleanPoints(m.clean.xyz, m.clean.gray);
+    if (m.slabs) view3d.setSlabs(m.slabs);
   }
   state.grid = m.grid;
   state.trajectory = m.trajectory;
@@ -203,7 +222,11 @@ function resetMapView() {
   view3d?.setGoal(null);
   view3d?.setObjects([]);
   view3d?.setWalls([]);
-  Object.assign(state, { pose: null, route: null, grid: null, places: [], landmarks: [], objects: [], walls: [], trajectory: new Float32Array(0), stats: null, truth: null, status: 'init' });
+  view3d?.setGrid(null);
+  view3d?.setCleanPoints(null);
+  view3d?.setSlabs([]);
+  view3d?.setPose(null);
+  Object.assign(state, { pose: null, unc: null, route: null, grid: null, places: [], landmarks: [], objects: [], walls: [], trajectory: new Float32Array(0), stats: null, truth: null, status: 'init' });
   stopNav(false);
   renderGrid();
   refreshDestinations();
@@ -370,7 +393,7 @@ function drawCompass(c) {
   const el = $('compass');
   if (!el) return;
   el.hidden = false;
-  el.classList.toggle('dim', !c.ok);
+  el.classList.toggle('dim', !c.ok || (c.quality != null && c.quality < 0.3)); // quality: 0–1, when the worker sends it
   $('compassNeedle').setAttribute('transform', `rotate(${c.heading.toFixed(1)} 32 32)`);
   const deg = ((Math.round(c.heading) % 360) + 360) % 360;
   $('compassText').textContent = `${deg}°`;
@@ -737,7 +760,10 @@ function setChip(id, text, cls = '') {
 function refreshChips() {
   const st = state.status;
   const label = { ok: 'Tracking', lost: 'Lost: stop and turn slowly', init: 'Looking for features…', reloc: 'Look around: finding where you are in the loaded map' }[st] ?? 'Idle';
-  setChip('chipTrack', state.loops ? `${label} · ${state.loops} loop${state.loops > 1 ? 's' : ''} closed` : label, st === 'ok' ? 'ok' : st === 'lost' ? 'err' : 'busy');
+  // Tracking, but the map is less sure where you are (drifting since the last loop closure).
+  const unsure = st === 'ok' && state.unc?.level === 'weak';
+  const text = unsure ? `${label} · position uncertain` : label;
+  setChip('chipTrack', state.loops ? `${text} · ${state.loops} loop${state.loops > 1 ? 's' : ''} closed` : text, st === 'ok' ? (unsure ? 'warn' : 'ok') : st === 'lost' ? 'err' : 'busy');
   const s = state.stats;
   setChip('chipMap', s ? `${s.keyframes} keyframes · ${s.freeArea.toFixed(0)} m² mapped` : 'No map yet');
   setChip('chipFps', state.fps ? `${state.fps.toFixed(0)} fps` : '— fps');
@@ -847,6 +873,37 @@ function bindSettings() {
   $('rigSummary').textContent = `${rigSettings.baselineCm} cm apart, ${rigSettings.angleDeg}° between them, ${rigSettings.hfovDeg}° field of view (from the measuring page).`;
 }
 
+/** The 3D toolbar: camera mode, colours, what's shown and the clip height, remembered between visits. */
+function bindView() {
+  const v = viewSettings;
+  const set = (key, value) => { v[key] = value; save(VIEW_KEY, v); applyView(); };
+  document.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => set('mode', b.dataset.view)));
+  document.querySelectorAll('[data-theme3d]').forEach((b) => b.addEventListener('click', () => set('theme', b.dataset.theme3d)));
+  $('inShowPoints').addEventListener('change', (e) => set('allDots', e.target.checked));
+  $('inShowObjects').addEventListener('change', (e) => set('objects', e.target.checked));
+  $('inShowWalls').addEventListener('change', (e) => set('walls', e.target.checked));
+  $('inClip').addEventListener('input', (e) => set('clip', Number(e.target.value)));
+  applyView();
+}
+
+function applyView() {
+  const v = viewSettings;
+  document.querySelectorAll('[data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === v.mode));
+  document.querySelectorAll('[data-theme3d]').forEach((b) => b.classList.toggle('active', b.dataset.theme3d === v.theme));
+  $('inShowPoints').checked = !!v.allDots;
+  $('inShowObjects').checked = v.objects !== false;
+  $('inShowWalls').checked = v.walls !== false;
+  $('inClip').value = v.clip;
+  $('clipVal').textContent = `${Number(v.clip).toFixed(1)} m`;
+  if (!view3d) return;
+  if (view3d.theme !== v.theme) view3d.setTheme(v.theme);
+  if (view3d.mode !== v.mode) view3d.setMode(v.mode);
+  view3d.setPointsVisible(!!v.allDots);
+  view3d.setObjectsVisible(v.objects !== false);
+  view3d.setWallsVisible(v.walls !== false);
+  view3d.setClipHeight(Number(v.clip) || 2.2);
+}
+
 function wire() {
   document.querySelectorAll('[data-src]').forEach((b) => b.addEventListener('click', () => {
     if (b.dataset.src === 'cameras') startCameras();
@@ -895,16 +952,9 @@ function wire() {
     if (rm) state.worker?.postMessage({ type: 'removePlace', name: rm.dataset.rm });
   });
   $('plan').addEventListener('click', planClick);
-  document.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => {
-    document.querySelectorAll('[data-view]').forEach((x) => x.classList.toggle('active', x === b));
-    view3d?.setMode(b.dataset.view);
-  }));
-  $('inShowPoints').addEventListener('change', (e) => view3d?.setPointsVisible(e.target.checked));
-  $('inShowObjects').addEventListener('change', (e) => view3d?.setObjectsVisible(e.target.checked));
-  $('inShowWalls').addEventListener('change', (e) => view3d?.setWallsVisible(e.target.checked));
+  bindView();
   $('inTurnFrom').value = settings.turnFrom;
   $('inTurnFrom').addEventListener('change', (e) => { settings.turnFrom = e.target.value; save(MAP_KEY, settings); banner('Applies the next time you start the cameras or the demo.', 'info'); });
-  $('inClip').addEventListener('input', (e) => { view3d?.setClipHeight(Number(e.target.value)); $('clipVal').textContent = `${Number(e.target.value).toFixed(1)} m`; });
   $('btnMic').addEventListener('click', () => talk.toggle());
   $('askForm').addEventListener('submit', (e) => { e.preventDefault(); const q = $('askInput').value.trim(); if (q) { $('askInput').value = ''; talk.ask(q); } });
   document.querySelectorAll('[data-ask]').forEach((b) => b.addEventListener('click', () => talk.ask(b.dataset.ask)));
@@ -938,6 +988,7 @@ async function init() {
   try {
     const { MapView3D } = await import('./view3d.js');
     view3d = new MapView3D($('view3d'), { onPick: (p) => goTo({ ...p, label: 'the spot you picked' }) });
+    applyView();
   } catch (e) {
     $('view3d').innerHTML = '<p class="muted pad">The 3D view needs three.js from the internet. The floor plan and directions still work.</p>';
   }
@@ -946,5 +997,5 @@ async function init() {
   }
 }
 
-window.stereoMap = { state, talk, guide };
+window.stereoMap = { state, talk, guide, get view3d() { return view3d; } };
 init();

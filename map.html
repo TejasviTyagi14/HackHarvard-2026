@@ -55,10 +55,14 @@
             <button type="button" data-view="orbit">Free look</button>
             <button type="button" data-view="top">From above</button>
           </div>
-          <label class="clip"><input type="checkbox" id="inShowPoints" checked> Points</label>
+          <label class="clip" title="Show every mapped point, not just the few that no floor, wall or surface explains"><input type="checkbox" id="inShowPoints"> All dots</label>
           <label class="clip"><input type="checkbox" id="inShowObjects" checked> Objects</label>
           <label class="clip"><input type="checkbox" id="inShowWalls" checked> Walls</label>
           <label class="clip">Hide above <input id="inClip" type="range" min="0.5" max="3" step="0.1" value="2.2"> <span id="clipVal">2.2 m</span></label>
+          <div class="seg small" role="group" aria-label="3D colours">
+            <button type="button" data-theme3d="dark" class="active">Dark</button>
+            <button type="button" data-theme3d="light">Light</button>
+          </div>
         </div>
       </div>
       <div class="view3d" id="view3d">
@@ -77,7 +81,7 @@
           <p class="ph-sub small" id="placeholderNote">Uses the camera spacing, angle and field of view from the measuring page, so calibrate there first.</p>
         </div>
       </div>
-      <p class="hint">Drag to look around, scroll to zoom. Click the floor to get directions there. Light blue: where you've walked. Amber: the route.</p>
+      <p class="hint">Drag to look around, scroll to zoom. Click the floor to get directions there. The blue cone is where the camera points, with a ray to what it's looking at; the soft patch around you is how sure the map is of where you are (amber or red when unsure). Glowing ribbon: the route. Thin line: where you've walked.</p>
     </section>
 
     <aside class="mapside">

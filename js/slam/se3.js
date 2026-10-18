@@ -114,7 +114,9 @@ export function solve(A, b, n) {
  * positions uv (flat array), with Huber weighting so a few bad tracks can't drag it away.
  * intr: { f, cx, cy }. fixR: keep the rotation, solve only where the camera is. extra(R, t): more
  * evidence about the pose, as { H (6×6), g (6) } for the same update (e.g. the visual compass).
- * Returns { pose, err (per-point reprojection error, px), rmse }.
+ * Returns { pose, err (per-point reprojection error, px), rmse, info }. info: the 6×6 Gauss-Newton
+ * information at the returned pose (row-major, ordered [ω, v] like the update, px² per unit²), so
+ * the pose covariance is about σ²·info⁻¹ for a pixel noise σ (px, on each image axis: about rmse/√2).
  */
 export function refinePose(pose, X, uv, intr, { iters = 12, huber = 1.5, fixR = false, extra = null } = {}) {
   const n = uv.length / 2;
@@ -135,11 +137,7 @@ export function refinePose(pose, X, uv, intr, { iters = 12, huber = 1.5, fixR = 
       const e = Math.hypot(ru, rv);
       err[i] = e;
       const w = e <= huber ? 1 : huber / e;
-      // d(u, v)/d(ω, v) for the left-multiplied update X_c ← exp(ω)·X_c + v,
-      // i.e. (∂π/∂X_c)·[−[X_c]× | I].
-      const iz2 = iz * iz;
-      const Ju = [-f * x * y * iz2, f + f * x * x * iz2, -f * y * iz, f * iz, 0, -f * x * iz2];
-      const Jv = [-(f + f * y * y * iz2), f * x * y * iz2, f * x * iz, 0, f * iz, -f * y * iz2];
+      const [Ju, Jv] = jacobian(f, x, y, iz);
       for (let a = 0; a < 6; a++) {
         g[a] += w * (Ju[a] * ru + Jv[a] * rv);
         for (let b = a; b < 6; b++) H[a * 6 + b] += w * (Ju[a] * Ju[b] + Jv[a] * Jv[b]);
@@ -168,7 +166,9 @@ export function refinePose(pose, X, uv, intr, { iters = 12, huber = 1.5, fixR = 
     t = [nt[0] + d[3], nt[1] + d[4], nt[2] + d[5]];
     if (Math.hypot(d[0], d[1], d[2]) < 1e-7 && Math.hypot(d[3], d[4], d[5]) < 1e-6) break;
   }
-  // Final residuals at the refined pose.
+  // Final residuals at the refined pose, and how firmly they pin it there (the same Huber weights,
+  // so a point that was weighed down counts as little here).
+  const info = new Array(36).fill(0);
   let s = 0, m = 0;
   for (let i = 0; i < n; i++) {
     const Xw = X[i * 3], Yw = X[i * 3 + 1], Zw = X[i * 3 + 2];
@@ -177,6 +177,32 @@ export function refinePose(pose, X, uv, intr, { iters = 12, huber = 1.5, fixR = 
     const z = R[6] * Xw + R[7] * Yw + R[8] * Zw + t[2];
     err[i] = z < 0.05 ? Infinity : Math.hypot(f * x / z + cx - uv[i * 2], f * y / z + cy - uv[i * 2 + 1]);
     if (err[i] < 3) { s += err[i] * err[i]; m++; }
+    if (z < 0.05) continue;
+    const w = err[i] <= huber ? 1 : huber / err[i];
+    const [Ju, Jv] = jacobian(f, x, y, 1 / z);
+    for (let a = 0; a < 6; a++) for (let b = a; b < 6; b++) info[a * 6 + b] += w * (Ju[a] * Ju[b] + Jv[a] * Jv[b]);
   }
-  return { pose: { R: orthonormalize(R), t }, err, rmse: m ? Math.sqrt(s / m) : Infinity };
+  if (extra) {
+    // The compass counts for the turn only. It's scaled to weigh like `compassWeight` points there,
+    // which is what it measures well (it's what makes the joint solve turn right); its say on where
+    // the camera is rests on the keyframe's depth (a model's guess with one camera) and that scale
+    // wasn't chosen for it, so the position's spread comes from the points alone. A known turn still
+    // firms up the position through the points (a sideways step no longer looks like a turn).
+    const more = extra(R, t);
+    if (more) for (let a = 0; a < 3; a++) for (let b = a; b < 3; b++) info[a * 6 + b] += more.H[a * 6 + b];
+  }
+  for (let a = 0; a < 6; a++) for (let b = 0; b < a; b++) info[a * 6 + b] = info[b * 6 + a];
+  return { pose: { R: orthonormalize(R), t }, err, rmse: m ? Math.sqrt(s / m) : Infinity, info };
+}
+
+/**
+ * Rows of d(u, v)/d(ω, v) for a camera-frame point (x, y, 1/z), for the left-multiplied update
+ * X_c ← exp(ω)·X_c + v, i.e. (∂π/∂X_c)·[−[X_c]× | I].
+ */
+function jacobian(f, x, y, iz) {
+  const iz2 = iz * iz;
+  return [
+    [-f * x * y * iz2, f + f * x * x * iz2, -f * y * iz, f * iz, 0, -f * x * iz2],
+    [-(f + f * y * y * iz2), f * x * y * iz2, f * x * iz, 0, f * iz, -f * y * iz2],
+  ];
 }
