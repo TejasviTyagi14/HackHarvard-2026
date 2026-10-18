@@ -237,3 +237,13 @@
   .radar-sec .rs-cam.is-scan::after { display: none; }
   .radar-sec * { transition: none !important; }
 }
+
+/* Spoken-updates toggle: a ring that fills once every 5 s while it's on. */
+.radar-sec .rs-updates .rs-ring { overflow: visible; transform: rotate(-90deg); }
+.radar-sec .rs-updates .rs-ring circle { fill: none; stroke-width: 2; }
+.radar-sec .rs-updates .rs-ring-bg { stroke: rgba(125, 211, 252, 0.25); }
+.radar-sec .rs-updates .rs-ring-fg { stroke: var(--accent); stroke-dasharray: 100; stroke-dashoffset: 100; }
+.radar-sec .rs-updates.is-on { background: rgba(125, 211, 252, 0.16); border-color: rgba(125, 211, 252, 0.6); color: #e0f2fe; box-shadow: 0 0 14px rgba(125, 211, 252, 0.25); }
+.radar-sec .rs-updates.is-on.is-tick .rs-ring-fg { animation: rs-countdown 5s linear infinite; }
+@keyframes rs-countdown { from { stroke-dashoffset: 100; } to { stroke-dashoffset: 0; } }
+@media (prefers-reduced-motion: reduce) { .radar-sec .rs-updates.is-on .rs-ring-fg { animation: none; stroke-dashoffset: 0; } }

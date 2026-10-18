@@ -83,6 +83,10 @@ export function mountRadar(section) {
             <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="10" cy="17" r="2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
             <span>Detail</span>
           </button>
+          <button class="rs-detail rs-updates" type="button" data-k="updates" aria-pressed="false" title="Say what's in front every 5 seconds" aria-label="Spoken updates every 5 seconds">
+            <svg class="rs-ring" viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><circle cx="10" cy="10" r="7.5" class="rs-ring-bg"/><circle cx="10" cy="10" r="7.5" class="rs-ring-fg" pathLength="100"/></svg>
+            <span>Updates · 5s</span>
+          </button>
           <canvas class="rs-wave" data-k="wave"></canvas>
         </div>
         <div class="rs-caption" data-k="caption" aria-live="polite"><span class="rs-mut">Ask the rig about the room.</span></div>
@@ -791,6 +795,33 @@ export function mountRadar(section) {
     },
   });
 
+  // Spoken updates: while on, every 5 s say what's in front, as a caption and out loud. It skips a
+  // beat while you're asking something or an answer is still being spoken, and while off-screen.
+  const UPDATE_MS = 5000;
+  let updTimer = 0;
+  function sayUpdate() {
+    if (!st.data || !st.active || st.listening) return;
+    // Short enough to say within the 5 s: the detail level's "objects per spoken update", no summary.
+    const d = st.detail, detail = { ...d, maxItems: d.updateItems, summary: false };
+    const r = answer("What's in front of me?", { ...scene(), detail }, {});
+    $('caption').innerHTML = '';
+    $('caption').append(el('div', 'rs-q', '&gt; update'), el('div', 'rs-a', escapeHtml(r.text)));
+    if (r.focus != null) { st.pulse = { id: r.focus, t: performance.now() }; if (reduced) pulseStatic(); }
+    // The caption always refreshes; the voice waits for the last update to finish rather than cutting it off.
+    if (!voice.speaking) voice.say(r.text, { interrupt: false }).catch(() => {});
+  }
+  function setUpdates(on) {
+    clearInterval(updTimer);
+    updTimer = on ? setInterval(sayUpdate, UPDATE_MS) : 0;
+    const b = $('updates');
+    b.setAttribute('aria-pressed', String(on));
+    b.classList.toggle('is-on', on);
+    // Restart the countdown ring so it lines up with the timer.
+    b.classList.remove('is-tick'); void b.offsetWidth; if (on) b.classList.add('is-tick');
+    if (on) sayUpdate();
+  }
+  $('updates').addEventListener('click', () => setUpdates(!updTimer));
+
   async function startAudio() {
     if (!navigator.mediaDevices?.getUserMedia) return;
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -901,6 +932,7 @@ export function mountRadar(section) {
       vids.forEach((v) => { v.pause(); v.srcObject = null; });
       ro?.disconnect();
       droid.dispose();
+      clearInterval(updTimer);
       listener.abort();
       voice.cancel();
       stopAudio();
