@@ -1,8 +1,8 @@
 # Black-Box Design: detectObject
 
-> Idea (from `detectObject_algo.txt`): *"Two webcams connected via USB to a laptop. The inputs are the constant data stream of the two cameras plus rig variables (angle between the webcams, distance between them, …). Using all inputs, focus a convenient region (a parameter that can be changed later) and detect which objects are in that window. A detail parameter controls how much detail is processed (lowest: "conference room"; middle: "conference room, 60 seats, one projector"; highest: "…, daylight, two speakers, one trip hazard at the front"). The detail parameter must be a clean mathematical model with clear input and output, because other algorithms will connect to it."*
+> Idea (from `docs/prompts/detectObject_algo.txt`): *"Two webcams connected via USB to a laptop. The inputs are the constant data stream of the two cameras plus rig variables (angle between the webcams, distance between them, …). Using all inputs, focus a convenient region (a parameter that can be changed later) and detect which objects are in that window. A detail parameter controls how much detail is processed (lowest: "conference room"; middle: "conference room, 60 seats, one projector"; highest: "…, daylight, two speakers, one trip hazard at the front"). The detail parameter must be a clean mathematical model with clear input and output, because other algorithms will connect to it."*
 >
-> Produced by following `BLACKBOX_DESIGN_PROMPT.md`. Code: `detect_object/`. Tests: `tests/test_detect_object.py`. Inputs/outputs rationale: `docs/detectObject_IO.pdf`. Assumptions are `A#` (§10).
+> Produced by following `docs/prompts/BLACKBOX_DESIGN_PROMPT.md`. Code: `detect_object/`. Tests: `tests/test_detect_object.py`. Inputs/outputs rationale: `docs/detectObject_IO.pdf`. Assumptions are `A#` (§10).
 
 **ID scheme:** `E0` explanatory box; `H*` hardware; `S*` software; `S1.n` children of `S1`. External inputs `X#`, external outputs `Y#`, wires `W##`.
 

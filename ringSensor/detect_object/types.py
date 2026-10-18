@@ -1,7 +1,7 @@
 """Data contracts for detectObject.
 
 Single source of truth for every port of the detectObject boxes
-(see DETECT_OBJECT_DESIGN.md). Change a type here only with agreement from
+(see docs/design/DETECT_OBJECT_DESIGN.md). Change a type here only with agreement from
 the owners of both boxes it connects.
 
 Units and frames

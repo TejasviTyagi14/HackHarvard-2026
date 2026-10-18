@@ -4,7 +4,7 @@ Idea (verbatim from the user):
 
 > "A ring-sized sensor that a blind people wears, such that wherever he points, the software will give a voice description of the environment pointed by the finger wearing the ring. Maybe it is a good idea to have a button push on the other hand to activate the scan of the environment. The software must, with the data feeding by the sensor, create a suitable data structure that allows to handle the neccesary information about the 3d mapping. Upon user request, which will be spoken, Droid (from factory.ai) has to interpret the spoken language instructions and, based on its interpretation, change the data structure (or something else) to make the data handling more efficient and faster (e.g. if the user wants only distance of the nearest object instead of both distance and description, there is a lot of room for improvements in efficiency)."
 
-This document follows the black-box paradigm in `BLACKBOX_DESIGN_PROMPT.md`. It has 11 sections, in the order that prompt sets.
+This document follows the black-box paradigm in `docs/prompts/BLACKBOX_DESIGN_PROMPT.md`. It has 11 sections, in the order that prompt sets.
 
 **Conventions used throughout**
 - Wire IDs are `W01`–`W135`. §5 holds the full parameter set for every wire, and it is the single authoritative copy. In box specs, ports quote the key parameters plus the wire ID. Both ends of a wire cite the same ID, so their parameters match by construction (R8).

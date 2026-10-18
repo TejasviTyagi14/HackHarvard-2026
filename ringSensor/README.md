@@ -2,8 +2,25 @@
 
 Python algorithm that reports which objects are in a focus region seen by two webcams, with
 a detail level λ (0 to 1) that sets how much it reports and computes. Design:
-[ARCHITECTURE.md](ARCHITECTURE.md), [DETECT_OBJECT_DESIGN.md](DETECT_OBJECT_DESIGN.md),
+[ARCHITECTURE.md](ARCHITECTURE.md), [docs/design/DETECT_OBJECT_DESIGN.md](docs/design/DETECT_OBJECT_DESIGN.md),
 inputs and outputs: [docs/detectObject_IO.pdf](docs/detectObject_IO.pdf).
+
+## Folder layout
+
+```
+ARCHITECTURE.md        the whole Ring Sensor system as black boxes
+detect_object/         the algorithm (package), its web viewer (web/) and Droid control (droid.py)
+interfaces/            shared data contracts for the whole system
+models/                bundled YOLO weights (yolo11n.pt)
+tests/                 pytest suites (no cameras or network needed)
+docs/
+  detectObject_IO.pdf  inputs and outputs, and why (rebuild: .venv/bin/python docs/build_io_pdf.py)
+  design/              black-box designs: detectObject, and the full ring system
+  prompts/             the original prompts the designs were built from
+  examples/            a worked example of the black-box format
+start_viewer.py/.sh    one-step launcher for the viewer
+requirements.txt
+```
 
 ## Setup (Linux and macOS)
 
