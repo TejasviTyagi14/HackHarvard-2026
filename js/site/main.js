@@ -26,7 +26,6 @@ async function startHero() {
     hero = await mountHero($('stage'), { onProgress: (f) => progress(0.1 + 0.9 * f) });
   } catch (err) {
     console.warn('3D flythrough unavailable:', err);
-    $('btnControl').hidden = true;
   }
   clearTimeout(cap);
   doneLoading();
@@ -56,10 +55,9 @@ function onScroll(p) {
   // The room dims as the radar comes up over it, and stops drawing once it's covered.
   $('stageShade').style.opacity = String(Math.max(0, (p - 0.35) / 0.65) * 0.78);
   hero?.setPaused(scrollY > innerHeight * 1.6);
-  if (!window.gsap) {
-    $('heroCopy').style.opacity = String(1 - Math.min(1, p * 2.2));
-    $('scrollHint').style.opacity = String(1 - Math.min(1, p * 5));
-  }
+  if (!window.gsap) $('scrollHint').style.opacity = String(1 - Math.min(1, p * 5));
+  // Drag-to-look only while the room fills the screen, so it never fights the radar's controls.
+  $('stage').classList.toggle('control', fine && p < 0.3);
 }
 
 function wireScroll() {
@@ -73,7 +71,6 @@ function wireScroll() {
       gsap.ticker.lagSmoothing(0);
     }
     ScrollTrigger.create({ trigger: '#hero', start: 'top top', end: 'bottom top', scrub: true, onUpdate: (st) => onScroll(st.progress) });
-    gsap.to('#heroCopy', { opacity: 0, y: -60, ease: 'none', scrollTrigger: { trigger: '#hero', start: 'top top', end: '45% top', scrub: true } });
     gsap.to('#scrollHint', { opacity: 0, ease: 'none', scrollTrigger: { trigger: '#hero', start: 'top top', end: '15% top', scrub: true } });
     gsap.to('.hud', { opacity: 0, ease: 'none', scrollTrigger: { trigger: '#hero', start: '20% top', end: '70% top', scrub: true } });
     gsap.from('#measure', { opacity: 0, y: 80, ease: 'none', scrollTrigger: { trigger: '#measure', start: 'top bottom', end: 'top 35%', scrub: true } });
@@ -89,61 +86,27 @@ function wireScroll() {
 }
 
 // ---------------------------------------------------------------------------------------
-// Buttons
+// No buttons: drag the room to look around it, let go and the tour picks up again. The wheel
+// still scrolls the page (zoom is off). Touch screens just watch, so the page scrolls freely.
 
-function setControl(on) {
-  inControl = on;
-  if (on) hero?.takeControl();
-  else hero?.resumeTour();
-  $('stage').classList.toggle('control', on);
-  $('btnControl').hidden = on;
-  $('btnResume').hidden = !on;
-  $('keysHint').hidden = !on;
-  // While you fly the camera, the wheel zooms instead of scrolling the page.
-  if (lenis) on ? lenis.stop() : lenis.start();
-  document.documentElement.style.overflow = on ? 'hidden' : '';
-}
+const fine = matchMedia('(pointer: fine)').matches;
+let idle = null;
 
-function wireButtons() {
-  $('btnControl').addEventListener('click', () => setControl(true));
-  $('btnResume').addEventListener('click', () => setControl(false));
-  addEventListener('keydown', (e) => { if (e.key === 'Escape' && inControl) setControl(false); });
-  $('btnScan').addEventListener('click', async () => {
-    // The real pipeline lives on the map page; without a camera, show the measuring demo instead.
-    const note = $('scanNote');
-    if (!navigator.mediaDevices?.getUserMedia || !window.isSecureContext) {
-      note.hidden = false;
-      note.textContent = 'This browser can’t open a camera here, so here’s the measuring demo instead.';
-      $('scrollHint').click();
-      return;
-    }
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({ video: true });
-      s.getTracks().forEach((t) => t.stop());
-      location.href = 'map.html';
-    } catch {
-      note.hidden = false;
-      note.textContent = 'Camera access was blocked. Allow it in the address bar to scan your space; meanwhile, here’s the demo.';
-      $('scrollHint').click();
-    }
+function wireLook() {
+  const stage = $('stage');
+  stage.addEventListener('pointerdown', () => {
+    clearTimeout(idle);
+    if (!inControl) { inControl = true; hero?.takeControl({ zoom: false }); }
+  });
+  addEventListener('pointerup', () => {
+    if (!inControl) return;
+    clearTimeout(idle);
+    idle = setTimeout(() => { inControl = false; hero?.resumeTour(); }, 4000);
   });
 }
 
-// The HUD clock: time since the tour started, as a recording would show it.
-function tickClock() {
-  const t0 = performance.now();
-  const el = $('hudClock');
-  const tick = () => {
-    const s = (performance.now() - t0) / 1000;
-    el.textContent = `T+${String(Math.floor(s / 60)).padStart(2, '0')}:${(s % 60).toFixed(1).padStart(4, '0')}`;
-    if (!reduced) setTimeout(tick, 100);
-  };
-  tick();
-}
-
 progress(0.05);
-wireButtons();
-tickClock();
+wireLook();
 // The CDN scripts are deferred, so they've run by the time this module does.
 wireScroll();
 startHero();

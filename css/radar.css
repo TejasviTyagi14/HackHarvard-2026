@@ -1,12 +1,13 @@
 /* Section 2 — "Measuring distance" radar HUD. Everything is scoped under .radar-sec. */
 .radar-sec {
-  --accent: #22d3ee;
+  --accent: #7dd3fc;
   --warm: #f59e0b;
   --bg: #05070a;
-  --line: rgba(34, 211, 238, 0.18);
-  --panel: rgba(12, 18, 24, 0.55);
-  --text: #d7e3ea;
-  --mut: rgba(215, 227, 234, 0.5);
+  --line: rgba(125, 211, 252, 0.18);
+  --panel: rgba(10, 14, 20, 0.6);
+  --text: #f1f6fa;
+  --obj: #4ade80;
+  --mut: rgba(241, 246, 250, 0.55);
   --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   background: var(--bg);
   color: var(--text);
@@ -31,7 +32,7 @@
 
 .radar-sec .rs-head { margin-bottom: 28px; }
 .radar-sec .rs-eyebrow { font: 500 12px/1 var(--mono); letter-spacing: 0.18em; color: var(--accent); margin-bottom: 14px; }
-.radar-sec .rs-title { font: 600 clamp(30px, 4.4vw, 52px)/1.05 Inter, system-ui, sans-serif; letter-spacing: -0.02em; margin: 0 0 12px; color: #f2f7fa; }
+.radar-sec .rs-title { font: 600 clamp(30px, 4.4vw, 52px)/1.05 Inter, system-ui, sans-serif; letter-spacing: -0.02em; margin: 0 0 12px; color: #ffffff; }
 .radar-sec .rs-copy { margin: 0; max-width: 60ch; color: var(--mut); font-size: 16px; line-height: 1.55; }
 
 .radar-sec .rs-panel {
@@ -50,7 +51,7 @@
 .radar-sec .rs-hud-tr { top: 14px; right: 14px; }
 .radar-sec .rs-hud-bl { bottom: 12px; left: 14px; }
 .radar-sec .rs-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: rs-blink 1.6s ease-in-out infinite; }
-.radar-sec .rs-key { display: inline-block; width: 10px; height: 10px; border: 1px dashed var(--accent); background: rgba(34, 211, 238, 0.12); margin-left: 6px; }
+.radar-sec .rs-key { display: inline-block; width: 10px; height: 10px; border: 1px dashed var(--accent); background: rgba(125, 211, 252, 0.12); margin-left: 6px; }
 .radar-sec .rs-key-warm { border-color: var(--warm); background: rgba(245, 158, 11, 0.2); border-style: solid; border-radius: 50%; }
 @keyframes rs-blink { 50% { opacity: 0.25; } }
 
@@ -66,7 +67,7 @@
 .radar-sec input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 18px; background: transparent; margin: 0; }
 .radar-sec input[type="range"]::-webkit-slider-runnable-track { height: 2px; background: var(--line); }
 .radar-sec input[type="range"]::-moz-range-track { height: 2px; background: var(--line); }
-.radar-sec input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; margin-top: -5px; border-radius: 2px; background: var(--bg); border: 1.5px solid var(--accent); box-shadow: 0 0 10px rgba(34, 211, 238, 0.45); }
+.radar-sec input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; margin-top: -5px; border-radius: 2px; background: var(--bg); border: 1.5px solid var(--accent); box-shadow: 0 0 10px rgba(125, 211, 252, 0.45); }
 .radar-sec input[type="range"]::-moz-range-thumb { width: 10px; height: 10px; border-radius: 2px; background: var(--bg); border: 1.5px solid var(--accent); }
 .radar-sec input[type="range"]:focus-visible { outline: 1px solid var(--accent); outline-offset: 4px; }
 
@@ -82,20 +83,21 @@
 .radar-sec .rs-table { padding: 6px 4px; overflow-x: auto; }
 .radar-sec table { width: 100%; border-collapse: collapse; font: 400 12.5px/1 var(--mono); }
 .radar-sec th { text-align: left; font-weight: 500; font-size: 10.5px; letter-spacing: 0.12em; color: var(--mut); padding: 10px 12px; border-bottom: 1px solid var(--line); }
-.radar-sec td { padding: 10px 12px; border-bottom: 1px solid rgba(34, 211, 238, 0.07); color: var(--text); white-space: nowrap; }
+.radar-sec td { padding: 10px 12px; border-bottom: 1px solid rgba(125, 211, 252, 0.07); color: var(--text); white-space: nowrap; }
 .radar-sec tbody tr { cursor: pointer; transition: background 0.15s; }
 .radar-sec tbody tr td:first-child { border-left: 2px solid transparent; }
-.radar-sec tbody tr.is-hover, .radar-sec tbody tr:hover { background: rgba(34, 211, 238, 0.07); }
-.radar-sec tbody tr.is-sel td:first-child { border-left-color: var(--accent); color: var(--accent); }
+.radar-sec tbody tr.is-hover, .radar-sec tbody tr:hover { background: rgba(125, 211, 252, 0.07); }
+.radar-sec tbody tr td:first-child { color: var(--obj); }
+.radar-sec tbody tr.is-sel td:first-child { border-left-color: var(--obj); font-weight: 600; }
 .radar-sec tbody tr.is-warm td { color: var(--warm); }
 .radar-sec tbody tr.is-warm.is-sel td:first-child { border-left-color: var(--warm); }
 .radar-sec .rs-tag { font-size: 9px; letter-spacing: 0.1em; color: var(--mut); border: 1px solid var(--line); padding: 2px 4px; border-radius: 3px; margin-left: 6px; }
 
 .radar-sec .rs-voice { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
 .radar-sec .rs-voice-top { display: flex; align-items: center; gap: 12px; }
-.radar-sec .rs-mic { flex: none; width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line); background: rgba(34, 211, 238, 0.06); color: var(--accent); display: grid; place-items: center; cursor: pointer; transition: box-shadow 0.2s, background 0.2s; }
-.radar-sec .rs-mic:hover { background: rgba(34, 211, 238, 0.12); }
-.radar-sec .rs-mic.is-on { background: rgba(34, 211, 238, 0.18); box-shadow: 0 0 0 4px rgba(34, 211, 238, 0.12), 0 0 18px rgba(34, 211, 238, 0.45); }
+.radar-sec .rs-mic { flex: none; width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line); background: rgba(125, 211, 252, 0.06); color: var(--accent); display: grid; place-items: center; cursor: pointer; transition: box-shadow 0.2s, background 0.2s; }
+.radar-sec .rs-mic:hover { background: rgba(125, 211, 252, 0.12); }
+.radar-sec .rs-mic.is-on { background: rgba(125, 211, 252, 0.18); box-shadow: 0 0 0 4px rgba(125, 211, 252, 0.12), 0 0 18px rgba(125, 211, 252, 0.45); }
 .radar-sec .rs-mic:focus-visible, .radar-sec .rs-chip:focus-visible, .radar-sec .rs-ask button:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 .radar-sec .rs-wave { flex: 1; min-width: 0; height: 36px; display: block; }
 .radar-sec .rs-caption { min-height: 48px; font: 400 13px/1.5 var(--mono); }
@@ -106,12 +108,65 @@
 .radar-sec .rs-ask input:focus { outline: none; border-color: var(--accent); }
 .radar-sec .rs-ask input::placeholder { color: var(--mut); }
 .radar-sec .rs-ask button { background: transparent; border: 1px solid var(--accent); color: var(--accent); border-radius: 6px; font: 600 11px var(--mono); letter-spacing: 0.12em; padding: 0 14px; cursor: pointer; }
-.radar-sec .rs-ask button:hover { background: rgba(34, 211, 238, 0.12); }
+.radar-sec .rs-ask button:hover { background: rgba(125, 211, 252, 0.12); }
 .radar-sec .rs-chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.radar-sec .rs-chip { background: rgba(34, 211, 238, 0.04); border: 1px solid var(--line); color: var(--text); border-radius: 999px; padding: 6px 12px; font: 400 12px var(--mono); cursor: pointer; }
+.radar-sec .rs-chip { background: rgba(125, 211, 252, 0.04); border: 1px solid var(--line); color: var(--text); border-radius: 999px; padding: 6px 12px; font: 400 12px var(--mono); cursor: pointer; }
 .radar-sec .rs-chip:hover { border-color: var(--accent); color: var(--accent); }
 .radar-sec .rs-msg { font: 400 11.5px/1.4 var(--mono); color: var(--warm); min-height: 1em; }
 .radar-sec .rs-msg:empty { display: none; }
+
+/* Detail button beside the mic, and the Droid pop-up (appended to <body>, so not under .radar-sec). */
+.radar-sec .rs-detail { flex: none; height: 32px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--line); background: rgba(125, 211, 252, 0.05); color: var(--accent); font: 500 11px var(--mono); letter-spacing: 0.06em; cursor: pointer; }
+.radar-sec .rs-detail:hover, .radar-sec .rs-detail[aria-expanded="true"] { background: rgba(125, 211, 252, 0.14); border-color: rgba(125, 211, 252, 0.5); }
+.radar-sec .rs-detail:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+
+.rs-droid {
+  --accent: #7dd3fc; --line: rgba(125, 211, 252, 0.22); --text: #f1f6fa; --mut: rgba(241, 246, 250, 0.55);
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  position: fixed; z-index: 60; width: min(420px, calc(100vw - 24px)); padding: 14px; box-sizing: border-box;
+  background: rgba(8, 12, 18, 0.78); border: 1px solid var(--line); border-radius: 12px; color: var(--text);
+  backdrop-filter: blur(16px) saturate(1.2); -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+  font-family: Inter, system-ui, sans-serif; animation: rd-in 0.16s ease-out;
+}
+.rs-droid[hidden] { display: none; }
+.rs-droid *, .rs-droid *::before { box-sizing: border-box; }
+@keyframes rd-in { from { opacity: 0; transform: translateY(6px); } }
+.rs-droid .rd-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.rs-droid .rd-title { font: 500 10.5px/1 var(--mono); letter-spacing: 0.16em; color: var(--accent); }
+.rs-droid .rd-x { width: 26px; height: 26px; border-radius: 6px; border: 1px solid transparent; background: none; color: var(--mut); font-size: 18px; line-height: 1; cursor: pointer; }
+.rs-droid .rd-x:hover { color: var(--text); border-color: var(--line); }
+.rs-droid .rd-seg { display: grid; grid-template-columns: repeat(3, 1fr); padding: 3px; gap: 3px; border: 1px solid var(--line); border-radius: 8px; background: rgba(5, 7, 10, 0.55); margin-bottom: 12px; }
+.rs-droid .rd-seg button { border: 0; border-radius: 6px; padding: 8px 0; background: none; color: var(--mut); font: 500 12px var(--mono); cursor: pointer; }
+.rs-droid .rd-seg button:hover { color: var(--text); }
+.rs-droid .rd-seg button.is-on { background: rgba(125, 211, 252, 0.16); color: var(--accent); box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.45); }
+.rs-droid button:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.rs-droid .rd-ed { border: 1px solid rgba(255, 255, 255, 0.07); border-radius: 8px; background: #05070a; overflow: hidden; }
+.rs-droid .rd-tab { display: flex; align-items: center; gap: 10px; padding: 8px 10px; font: 500 11px var(--mono); color: var(--mut); border-bottom: 1px solid rgba(255, 255, 255, 0.06); background: rgba(255, 255, 255, 0.02); }
+.rs-droid .rd-dots { display: inline-flex; gap: 5px; }
+.rs-droid .rd-dots i { width: 8px; height: 8px; border-radius: 50%; background: rgba(255, 255, 255, 0.14); }
+.rs-droid .rd-status { padding: 8px 10px 4px; font: 400 11.5px/1.4 var(--mono); color: var(--text); min-height: 1.4em; }
+.rs-droid .rd-acc { color: var(--accent); }
+.rs-droid .rd-ok { color: #4ade80; }
+.rs-droid .rd-mut { color: var(--mut); }
+.rs-droid .rd-code { margin: 0; padding: 4px 0 10px; font: 400 11.5px/1.6 var(--mono); color: rgba(241, 246, 250, 0.78); min-height: 16em; white-space: pre; overflow-x: auto; }
+.rs-droid .rd-ln { display: block; padding-right: 10px; }
+.rs-droid .rd-no { display: inline-block; width: 2.6em; padding-right: 0.8em; text-align: right; color: rgba(241, 246, 250, 0.25); user-select: none; }
+.rs-droid .rd-mk { display: inline-block; width: 1.4em; color: rgba(241, 246, 250, 0.3); }
+.rs-droid .rd-del { background: rgba(248, 113, 113, 0.12); color: #fca5a5; }
+.rs-droid .rd-del .rd-mk { color: #f87171; }
+.rs-droid .rd-add { background: rgba(74, 222, 128, 0.12); color: #86efac; }
+.rs-droid .rd-add .rd-mk { color: #4ade80; }
+.rs-droid .rd-cur { display: inline-block; width: 0.55em; height: 1.1em; vertical-align: -0.2em; background: var(--accent); margin-left: 1px; animation: rd-blink 0.9s steps(1) infinite; }
+@keyframes rd-blink { 50% { opacity: 0; } }
+.rs-droid .rd-foot { margin: 10px 2px 0; font: 400 10.5px/1.4 var(--mono); color: var(--mut); }
+@media (max-width: 640px) {
+  .rs-droid { left: 0 !important; right: 0; bottom: 0; top: auto !important; width: 100%; border-radius: 14px 14px 0 0; border-bottom: 0; padding: 14px 16px calc(16px + env(safe-area-inset-bottom)); max-height: 85vh; overflow-y: auto; animation-name: rd-up; }
+  @keyframes rd-up { from { transform: translateY(100%); } }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rs-droid, .rs-droid .rd-cur { animation: none; }
+}
 
 @media (max-width: 900px) {
   .radar-sec .rs-grid, .radar-sec .rs-lower { grid-template-columns: minmax(0, 1fr); }

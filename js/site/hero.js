@@ -8,7 +8,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
-const BG = '#05070a', CYAN = '#22d3ee', WARM = '#f59e0b';
+const BG = '#05070a', CYAN = '#7dd3fc', GREEN = '#4ade80', WARM = '#f59e0b'; // light blue for the rig and scan, green for object labels
 const REVEAL_DELAY = 2.0, REVEAL_LEN = 1.2, FADE = 0.6;
 const NAMES = { 'potted plant': 'PLANT', 'dining table': 'TABLE', book: 'SHELF', refrigerator: 'FRIDGE', tv: 'TV' };
 
@@ -94,7 +94,7 @@ export async function mountHero(container, { onProgress, motion } = {}) {
   style.textContent = `
 .hero-labels{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:2}
 .hero-fade{position:absolute;inset:0;pointer-events:none;background:${BG};opacity:0;z-index:1}
-.hero-label{position:absolute;left:0;top:0;white-space:nowrap;font:600 11px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.12em;color:${CYAN};padding:4px 7px 4px 8px;background:rgba(5,7,10,.62);border-left:2px solid currentColor;opacity:0;will-change:transform,opacity;text-shadow:0 0 8px rgba(34,211,238,.45)}
+.hero-label{position:absolute;left:0;top:0;white-space:nowrap;font:600 11px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.12em;color:${GREEN};padding:4px 7px 4px 8px;background:rgba(5,7,10,.62);border-left:2px solid currentColor;opacity:0;will-change:transform,opacity;text-shadow:0 0 8px rgba(74,222,128,.45)}
 .hero-label.near{color:${WARM};text-shadow:0 0 8px rgba(245,158,11,.5)}
 .hero-label::after{content:'';position:absolute;left:-2px;top:100%;width:1px;height:14px;background:currentColor;opacity:.6}`;
   container.appendChild(style);
@@ -486,11 +486,12 @@ export async function mountHero(container, { onProgress, motion } = {}) {
 
   return {
     setScroll(p) { scrollP = Math.max(0, Math.min(1, +p || 0)); dirty = true; },
-    takeControl() {
+    takeControl({ zoom = true } = {}) {
       if (controls) return;
       mode = 'orbit';
       controls = new OrbitControls(camera, canvas);
       controls.enableDamping = true; controls.dampingFactor = 0.08;
+      controls.enableZoom = zoom; // off when the wheel should keep scrolling the page
       controls.minDistance = 0.8; controls.maxDistance = 22; controls.maxPolarAngle = Math.PI * 0.49;
       controls.target.copy(rigPos);
       controls.addEventListener('change', () => { dirty = true; });

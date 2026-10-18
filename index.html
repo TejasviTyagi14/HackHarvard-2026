@@ -24,9 +24,8 @@
   <script type="module" src="js/site/main.js"></script>
 </head>
 <body class="site">
-  <div class="loader" id="loader" role="status" aria-live="polite">
+  <div class="loader" id="loader" role="status" aria-label="Loading the 3D tour">
     <div class="loader-inner">
-      <span class="mono">Initialising sensors</span>
       <div class="bar"><i id="loaderBar"></i></div>
       <span class="mono pct" id="loaderPct">0%</span>
     </div>
@@ -40,49 +39,19 @@
       <span class="logo" aria-hidden="true"><i></i><i></i></span>
       <span>Stereo Map</span>
     </a>
-    <nav aria-label="Pages">
-      <a href="map.html">Map a building</a>
-      <a href="measure.html">Measure</a>
-      <a href="https://github.com/TejasviTyagi14/HackHarvard-2026" rel="noopener">GitHub</a>
-    </nav>
   </header>
 
   <main>
-    <section class="hero" id="hero" aria-labelledby="heroTitle">
+    <!-- The 3D tour is the whole first screen: no words, just the room building itself. Drag to look around. -->
+    <section class="hero" id="hero" aria-label="3D tour of a building being mapped">
       <div class="hud" aria-hidden="true">
         <span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span>
-        <div class="readout left mono">
-          <span><b class="rec"></b>REC · DEMO TOUR</span>
-          <span id="hudClock">T+00:00.0</span>
-        </div>
-        <div class="readout right mono">
-          <span>RIG · 2 CAM · 12 CM</span>
-          <span>HFOV 70° · 10 HZ</span>
-        </div>
       </div>
-
-      <div class="hero-copy" id="heroCopy">
-        <p class="eyebrow mono">01 · Building the world</p>
-        <h1 id="heroTitle">A camera that understands<br>the space around it.</h1>
-        <p class="lede">Two ordinary webcams. A live 3D map of the building, the distance to everything in view, and a voice you can ask.</p>
-        <div class="cta">
-          <button type="button" class="btn primary" id="btnControl">Take control</button>
-          <button type="button" class="btn primary" id="btnResume" hidden>Resume tour</button>
-          <button type="button" class="btn ghost" id="btnScan">Scan your space</button>
-        </div>
-        <p class="keys mono" id="keysHint" hidden>Drag to orbit · scroll to zoom · WASD to move · Resume tour to scroll on</p>
-        <p class="note" id="scanNote" role="status" hidden></p>
-      </div>
-
-      <a class="scroll-hint mono" href="#measure" id="scrollHint"><span>Scroll</span><i aria-hidden="true"></i></a>
+      <a class="scroll-hint" href="#measure" id="scrollHint" aria-label="Scroll to the two-camera rig"><i aria-hidden="true"></i></a>
     </section>
 
     <section class="radar-sec" id="measure" aria-label="Measuring distance"></section>
   </main>
 
-  <footer class="foot mono">
-    <span>Stereo Map · HackHarvard 2026</span>
-    <span>Runs in the browser · no cloud for camera images</span>
-  </footer>
 </body>
 </html>

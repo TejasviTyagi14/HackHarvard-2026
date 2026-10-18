@@ -7,6 +7,7 @@
     "start": "node --env-file-if-exists=.env server/index.js",
     "test": "node --test",
     "start:static": "python3 -m http.server 8765 --bind 127.0.0.1",
+    "start:droid": "python3 tools/droid_bridge.py",
     "phone:setup": "node --env-file-if-exists=.env server/phone-setup.js"
   },
   "dependencies": {

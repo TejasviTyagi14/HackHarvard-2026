@@ -3,10 +3,13 @@
 import { runPipeline, assistantScene, VIEW_W, VIEW_H, HFOV } from './adapter.js';
 import { answer, answerBest, classFromPhrase } from '../assistant.js';
 import { Voice, Listener } from '../speech.js';
+import { DETAIL_PRESETS, normalizeDetail } from '../detail.js';
+import { mountDroid } from './droid.js';
 
 const DEG = Math.PI / 180;
 const MAX_R = 6;
-const ACCENT = [34, 211, 238], WARM = [245, 158, 11];
+// Light blue for the rig and HUD, green for detected objects, amber only for the < 1 m alert.
+const ACCENT = [125, 211, 252], OBJ = [74, 222, 128], WARM = [245, 158, 11];
 const rgba = (c, a) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
 const NAMES = { 'dining table': 'TABLE', 'potted plant': 'PLANT', tv: 'TV' };
 const label = (cls) => NAMES[cls] ?? cls.toUpperCase();
@@ -60,6 +63,10 @@ export function mountRadar(section) {
           <button class="rs-mic" type="button" aria-label="Ask by voice" data-k="mic">
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>
           </button>
+          <button class="rs-detail" type="button" data-k="detail" title="Change how detailed answers are — Droid edits the assistant" aria-label="Change how detailed answers are">
+            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="10" cy="17" r="2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+            <span>Detail</span>
+          </button>
           <canvas class="rs-wave" data-k="wave"></canvas>
         </div>
         <div class="rs-caption" data-k="caption" aria-live="polite"><span class="rs-mut">Ask the rig about the room.</span></div>
@@ -77,6 +84,7 @@ export function mountRadar(section) {
   const st = {
     base: 12, toe: 0, data: null, hover: null, sel: null, pulse: null, lit: new Map(),
     sweep: -60, dir: 1, active: false, raf: 0, last: 0, pending: true, ctx: {}, listening: false,
+    detail: normalizeDetail(DETAIL_PRESETS.normal), lastQ: null, lastCtx: {},
   };
   const offs = [0, 1].map(() => Object.assign(document.createElement('canvas'), { width: VIEW_W, height: VIEW_H }));
 
@@ -188,7 +196,7 @@ export function mountRadar(section) {
     const sel = selected()?.id;
     for (const o of objects()) {
       const hot = o.id === st.hover || o.id === sel;
-      const col = isClose(o) ? WARM : ACCENT;
+      const col = isClose(o) ? WARM : OBJ;
       [o.boxL, o.boxR].forEach((b, i) => {
         if (!b) return;
         g.strokeStyle = rgba(col, hot ? 1 : 0.7);
@@ -353,7 +361,7 @@ export function mountRadar(section) {
     const placed = [];
     for (const o of objects()) {
       const [x, y] = blipXY(o);
-      const col = isClose(o) ? WARM : ACCENT;
+      const col = isClose(o) ? WARM : OBJ;
       const lit = reduced ? 1 : st.lit.get(o.id) ?? 0;
       const hot = o.id === st.hover || o.id === sel;
       const a = o.range == null ? 0.35 : 0.5 + 0.5 * lit;
@@ -486,7 +494,10 @@ export function mountRadar(section) {
   let audio = null; // { ctx, stream, analyser, buf }
   const msg = (t) => { $('msg').textContent = t || ''; };
 
+  // The scene the assistant sees, with the level of detail picked in the Droid pop-up.
+  const scene = () => ({ ...assistantScene(objects()), detail: st.detail });
   function respond(r, heard) {
+    if (r.intent !== 'detail') { st.lastQ = heard; st.lastCtx = st.ctx; }
     st.ctx = r.ctx;
     $('caption').innerHTML = '';
     $('caption').append(el('div', 'rs-q', `&gt; ${escapeHtml(heard)}`), el('div', 'rs-a', escapeHtml(r.text)));
@@ -503,12 +514,13 @@ export function mountRadar(section) {
       drawViews();
       if (!st.active || reduced) pulseStatic();
     }
+    if (r.intent === 'detail') { droid.open(); return; }
     voice.say(r.text).catch(() => {});
   }
   function ask(q) {
     q = q.trim();
     if (!q || !st.data) return;
-    respond(answer(q, assistantScene(objects()), st.ctx), q);
+    respond(answer(q, scene(), st.ctx), q);
   }
   // Without the sweep loop running, animate the pulse on its own for 3 s.
   function pulseStatic() {
@@ -525,6 +537,19 @@ export function mountRadar(section) {
     b.addEventListener('click', () => { $('q').value = c; ask(c); });
     $('chips').append(b);
   }
+
+  // Droid detail pop-up: applies the preset the way the Measure page does (scene.detail), then
+  // re-asks the last question so the caption visibly changes.
+  const droid = mountDroid({
+    button: $('detail'), anchor: section.querySelector('.rs-voice'), reduced,
+    onApply(level, detail) {
+      st.detail = normalizeDetail(detail);
+      if (!st.data) return;
+      const q = st.lastQ ?? "What's closest to me?";
+      st.ctx = st.lastCtx ?? {};
+      respond(answer(q, scene(), st.ctx), q);
+    },
+  });
 
   async function startAudio() {
     if (!navigator.mediaDevices?.getUserMedia) return;
@@ -565,7 +590,7 @@ export function mountRadar(section) {
     const res = await listener.listen({ onInterim: (t) => { $('caption').innerHTML = `<span class="rs-mut">${escapeHtml(t)}</span>`; } });
     setListening(false);
     stopAudio();
-    if (res.alternatives) return respond(answerBest(res.alternatives, assistantScene(objects()), st.ctx), res.alternatives[0]);
+    if (res.alternatives) return respond(answerBest(res.alternatives, scene(), st.ctx), res.alternatives[0]);
     $('caption').innerHTML = '<span class="rs-mut">Ask the rig about the room.</span>';
     if (res.error === 'not-allowed' || res.error === 'service-not-allowed') msg('Speech recognition was blocked. Type a question below.');
     else if (res.error === 'no-speech') msg("Didn't hear anything. Try again, or type below.");
@@ -626,6 +651,7 @@ export function mountRadar(section) {
       cancelAnimationFrame(st.raf);
       cancelAnimationFrame(qRaf);
       ro?.disconnect();
+      droid.dispose();
       listener.abort();
       voice.cancel();
       stopAudio();
