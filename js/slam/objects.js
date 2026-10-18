@@ -6,6 +6,7 @@ import { apply, mulv } from './se3.js';
 // Typical size (width, height, depth in m) of things worth putting in an indoor map. Depth (front
 // to back) can't be seen from the front, so it comes from here, scaled with the measured width.
 export const TYPICAL = {
+  person: [0.5, 1.7, 0.3],
   chair: [0.5, 0.9, 0.5], couch: [2, 0.85, 0.9], bed: [1.6, 0.6, 2], 'dining table': [1.4, 0.75, 0.8],
   bench: [1.5, 0.45, 0.4], tv: [1, 0.6, 0.08], laptop: [0.35, 0.25, 0.25], 'potted plant': [0.4, 0.8, 0.4],
   refrigerator: [0.75, 1.8, 0.7], oven: [0.6, 0.9, 0.6], microwave: [0.5, 0.3, 0.4], sink: [0.6, 0.3, 0.5],
@@ -16,6 +17,8 @@ export const TYPICAL = {
 };
 
 const FLOOR_SNAP = 0.35; // a box whose bottom is this close to the floor is standing on it
+export const MAX_RANGE = 15; // m: further than this, the depth (and the box) can't be trusted
+const PERSON_TTL = 6; // s: people move, so one not seen for this long is gone
 
 /**
  * One detection → a 3D box in the map frame, or null if there isn't enough depth.
@@ -32,13 +35,13 @@ export function measureBox(det, depth, intr, mapPose) {
     for (let x = Math.floor(bx + 0.25 * bw); x < bx + 0.75 * bw; x += 2) {
       if (x < 0 || y < 0 || x >= w || y >= h) continue;
       const z = depth[y * w + x];
-      if (z > 0.3 && z < 8) zs.push(z);
+      if (z > 0.3 && z < MAX_RANGE + 1) zs.push(z);
     }
   }
   if (zs.length < 6) return null;
   zs.sort((a, b) => a - b);
   const Z = zs[Math.floor(zs.length * 0.3)];
-  if (Z > 6) return null;
+  if (Z > MAX_RANGE) return null;
   const width = (bw * Z) / f, height = (bh * Z) / f;
   if (width < 0.05 || width > 4 || height < 0.03 || height > 2.6) return null;
   const depthM = typical[2] * Math.max(0.5, Math.min(2, width / typical[0]));
@@ -52,9 +55,17 @@ export function measureBox(det, depth, intr, mapPose) {
   const look = mulv(mapPose.R, [ux, 0, 1]);
   const yaw = Math.atan2(look[0], look[2]);
   // Map frame: y points down, floor at 0, so the box's bottom is at y = c.y + height/2.
-  let bottom = c[1] + height / 2;
+  let bottom = c[1] + height / 2, hh = height, feet = null;
   if (Math.abs(bottom) < FLOOR_SNAP) bottom = 0;
-  return { cls: det.class, score: det.score, x: c[0], z: c[2], bottom, w: width, h: height, d: depthM, yaw };
+  if (det.class === 'person') {
+    // People stand on the floor, upright: tall from the floor to the top of the head, even
+    // when their feet are out of view. Feet in view mark where the floor is (see World.addFeet).
+    const top = apply(mapPose, [ux * Z, ((by - cy) / f) * Z, Z]);
+    hh = Math.min(2.1, Math.max(0.9, -top[1]));
+    bottom = 0;
+    if (by + bh < h - 3) feet = apply(mapPose, [ux * Z, ((by + bh - cy) / f) * Z, Z]);
+  }
+  return { cls: det.class, score: det.score, x: c[0], z: c[2], bottom, w: width, h: hh, d: depthM, yaw, feet };
 }
 
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
@@ -64,19 +75,25 @@ export class ObjectMap {
   constructor() {
     this.list = [];
     this.nextId = 1;
+    this.now = 0;
   }
 
   /** Adds a sighting; returns the object it was merged into (or the new one). */
   add(b, anchor = null) {
+    const { feet, ...box } = b;
+    const person = b.cls === 'person', t = b.t ?? 0;
+    this.now = Math.max(this.now, t);
+    if (person) this.list = this.list.filter((o) => o.cls !== 'person' || this.now - o.t < PERSON_TTL);
     const near = this.list.find((o) => o.cls === b.cls
-      && Math.hypot(o.x - b.x, o.z - b.z) < Math.max(0.5, 0.6 * Math.max(o.w, o.d, b.w)));
+      && Math.hypot(o.x - b.x, o.z - b.z) < (person ? 1.2 : Math.max(0.5, 0.6 * Math.max(o.w, o.d, b.w))));
     if (!near) {
-      const o = { id: this.nextId++, ...b, n: 1, anchor };
+      const o = { id: this.nextId++, ...box, t, n: 1, anchor };
       this.list.push(o);
       return o;
     }
-    // Running average; size and place settle as more views come in.
-    const k = 1 / (near.n + 1);
+    // Running average; size and place settle as more views come in. People follow the newest view.
+    const k = person ? 0.7 : 1 / (near.n + 1);
+    near.t = t;
     for (const key of ['x', 'z', 'bottom', 'w', 'h', 'd']) near[key] += (b[key] - near[key]) * k;
     near.yaw = wrap(near.yaw + wrap(b.yaw - near.yaw) * k);
     near.n++;
@@ -84,8 +101,13 @@ export class ObjectMap {
     return near;
   }
 
-  /** Objects seen at least twice: single sightings are often the detector being wrong. */
+  /** Objects seen at least twice (single sightings are often the detector being wrong), and people seen lately. */
   confirmed(min = 2) {
-    return this.list.filter((o) => o.n >= min);
+    return this.list.filter((o) => (o.cls === 'person' ? this.now - o.t < PERSON_TTL : o.n >= min));
+  }
+
+  /** The furniture: what stays put, so it's worth saving and navigating to. */
+  lasting(min = 2) {
+    return this.list.filter((o) => o.cls !== 'person' && o.n >= min);
   }
 }

@@ -33,6 +33,8 @@ export class MapView3D {
     this.scene.add(sun);
     this.things = new THREE.Group(); // furniture models for the objects seen
     this.scene.add(this.things);
+    this.walls = new THREE.Group(); // flat vertical surfaces found in the points
+    this.scene.add(this.walls);
 
     // Point cloud with room for 2 million points; drawn up to however many have arrived.
     this.cap = 2_000_000;
@@ -184,6 +186,25 @@ export class MapView3D {
     }
   }
 
+  /** Walls: segments on the floor plan with a height (see slam/walls.js). */
+  setWalls(list) {
+    this.walls.clear();
+    for (const w of list) {
+      const dx = w.x1 - w.x0, dz = w.z1 - w.z0, L = Math.hypot(dx, dz) + 0.1;
+      const m = new THREE.Mesh(unitBox, wallMat(this.clip));
+      m.scale.set(L, w.top, 0.08);
+      m.position.set((w.x0 + w.x1) / 2, w.top / 2, -(w.z0 + w.z1) / 2);
+      m.rotation.y = Math.atan2(dz, dx); // local x along the wall
+      const e = new THREE.LineSegments(unitEdges, edgeMat);
+      e.scale.copy(m.scale); e.position.copy(m.position); e.rotation.copy(m.rotation);
+      this.walls.add(m, e);
+    }
+  }
+
+  setWallsVisible(on) {
+    this.walls.visible = on;
+  }
+
   setPointsVisible(on) {
     this.cloud.visible = on;
   }
@@ -240,8 +261,12 @@ const edgeMat = new THREE.LineBasicMaterial({ color: 0x0b0e14, transparent: true
 const COLORS = {
   chair: 0xc084fc, couch: 0x34d399, bed: 0x818cf8, 'dining table': 0xd9a066, bench: 0xd9a066, tv: 0x64748b,
   laptop: 0x94a3b8, 'potted plant': 0x22c55e, refrigerator: 0xe2e8f0, oven: 0xcbd5e1, microwave: 0xcbd5e1,
-  sink: 0xcbd5e1, toilet: 0xf1f5f9, suitcase: 0xf472b6, backpack: 0xf472b6,
+  sink: 0xcbd5e1, toilet: 0xf1f5f9, suitcase: 0xf472b6, backpack: 0xf472b6, person: 0xfb7185,
 };
+let wallMaterial = null;
+const wallMat = (clip) => (wallMaterial ??= new THREE.MeshLambertMaterial({
+  color: 0x9fb3c8, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false, clippingPlanes: [clip],
+}));
 const mats = new Map();
 const matFor = (color) => {
   if (!mats.has(color)) mats.set(color, new THREE.MeshLambertMaterial({ color }));
@@ -291,6 +316,19 @@ function furniture(cls, w, h, d) {
       part(-0.46, 0.46, 0.2, 0.95, 0.5, 0.52, 0x0ea5e9); // screen
       part(-0.15, 0.15, 0, 0.15, -0.5, 0.5, dark);
       break;
+    case 'person': {
+      // Standing upright on the floor, facing you.
+      part(-0.32, -0.04, 0, 0.47, -0.3, 0.3, 0x475569); // legs
+      part(0.04, 0.32, 0, 0.47, -0.3, 0.3, 0x475569);
+      part(-0.38, 0.38, 0.47, 0.83, -0.4, 0.4); // body
+      part(-0.5, -0.38, 0.5, 0.82, -0.3, 0.3); // arms
+      part(0.38, 0.5, 0.5, 0.82, -0.3, 0.3);
+      const r = 0.075 * h;
+      const head = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), matFor(0xfcd34d));
+      head.position.y = h - r;
+      g.add(head);
+      break;
+    }
     case 'potted plant': {
       const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.3 * w, 0.22 * w, 0.35 * h, 16), matFor(0xb45309));
       pot.position.y = 0.175 * h;

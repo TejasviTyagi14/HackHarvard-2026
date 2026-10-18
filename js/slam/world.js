@@ -24,6 +24,7 @@ export const WORLD_DEFAULTS = {
   alignKeyframes: 4, // keyframes to collect before fitting the floor
   hit: 0.85, miss: -0.4, minLog: -2, maxLog: 3.5, // log-odds for the floor grid
   minHits: 2, // views a voxel needs before it shows (more = less noise)
+  refitEvery: 15, // keyframes between tries at finding the floor again, while it's only assumed
 };
 
 const OCC = 0.7, FREE = -0.4;
@@ -51,6 +52,9 @@ export class World {
     this.landmarks = [];
     this.places = [];
     this.objects = new ObjectMap();
+    this.feet = []; // where people's feet were (odometry frame): they stand on the floor
+    this.lastLevel = 0;
+    this.levels = 0; // times the map was re-levelled (the worker redraws the path when it changes)
     this.version = 0;
   }
 
@@ -78,6 +82,65 @@ export class World {
       return;
     }
     if (keep.fuse) this.fuse(keep);
+    if (this.floor !== 'fitted' && this.keyframes.length % this.o.refitEvery === 0) this.refitFloor();
+  }
+
+  /**
+   * While the floor is only assumed, looks for it again in the whole 3D model (by now the floor
+   * has usually come into view). True if the map was re-levelled.
+   */
+  refitFloor() {
+    const cand = [];
+    for (const v of this.voxels.values()) if (v.n >= this.o.minHits && Math.abs(v.y) < 0.5) cand.push([v.x, v.y, v.z]);
+    const step = Math.max(1, Math.ceil(cand.length / 20000));
+    const sub = step > 1 ? cand.filter((_, i) => i % step === 0) : cand;
+    const plane = ransacPlane(sub, 0.04, 300);
+    if (!plane || plane.inliers < Math.max(300 / step, 0.25 * sub.length)) return false;
+    let n = plane.n;
+    if (n[1] > 0) n = n.map((x) => -x);
+    if (-n[1] < Math.cos((25 * Math.PI) / 180)) return false;
+    const Rc = rotationBetween(n, [0, -1, 0]);
+    const ys = plane.points.map((p) => mulv(Rc, p)[1]).sort((a, b) => a - b);
+    this.relevel(Rc, ys[ys.length >> 1], 'fitted');
+    return true;
+  }
+
+  /**
+   * People stand on the floor: when the floor hasn't been found, their feet show where it is (and,
+   * once they've been seen in a few places, which way is level). p: feet in the map frame.
+   * True if the map was re-levelled.
+   */
+  addFeet(p, now) {
+    if (this.floor === 'fitted' || !this.align) return false;
+    this.feet.push(apply(invert(this.align), p));
+    if (this.feet.length > 80) this.feet.shift();
+    if (this.feet.length < 3 || now - this.lastLevel < 3) return false;
+    const pts = this.feet.map((q) => apply(this.align, q));
+    let Rc = [1, 0, 0, 0, 1, 0, 0, 0, 1], tilt = 0;
+    const plane = pts.length >= 8 && fitHeightPlane(pts);
+    if (plane) {
+      const n = plane.map((x) => x / Math.hypot(...plane));
+      tilt = Math.acos(Math.min(1, -n[1]));
+      if (tilt < (15 * Math.PI) / 180) Rc = rotationBetween(n, [0, -1, 0]);
+      else tilt = 0;
+    }
+    const ys = pts.map((q) => mulv(Rc, q)[1]).sort((a, b) => a - b);
+    const dy = ys[ys.length >> 1];
+    if (Math.abs(dy) < 0.04 && tilt < (2 * Math.PI) / 180) return false;
+    this.lastLevel = now;
+    this.relevel(Rc, dy, 'people');
+    return true;
+  }
+
+  /** Turns the map by Rc (so the floor is level) and moves it up by dy (so the floor is at 0), keeping everything on it. */
+  relevel(Rc, dy, how) {
+    const A = this.align;
+    const t = mulv(Rc, A.t);
+    this.align = { R: mul3(Rc, A.R), t: [t[0], t[1] - dy, t[2]] };
+    this.floor = how;
+    this.levels++;
+    this.reanchor();
+    this.rebuild();
   }
 
   /** Fits the floor plane in the first keyframes and fuses them. */
@@ -221,9 +284,9 @@ export class World {
   /** Throws everything away except the keyframes, then fuses them all again. */
   rebuild(opts = {}) {
     Object.assign(this.o, opts);
-    const { keyframes, landmarks, places, align, floor, objects } = this;
+    const { keyframes, landmarks, places, align, floor, objects, feet, lastLevel, levels } = this;
     this.reset();
-    Object.assign(this, { landmarks, places, align, floor, objects });
+    Object.assign(this, { landmarks, places, align, floor, objects, feet, lastLevel, levels });
     for (const kf of keyframes) {
       this.keyframes.push(kf);
       if (kf.fuse) this.fuse(kf);
@@ -244,6 +307,12 @@ export class World {
   correct(mapPoses) {
     const toOdo = invert(this.align ?? this.assumedAlign());
     mapPoses.forEach((P, k) => { this.keyframes[k].pose = compose(toOdo, P); });
+    this.reanchor();
+    this.rebuild();
+  }
+
+  /** Puts places and objects back where their keyframes say, after the keyframes or the map frame moved. */
+  reanchor() {
     const move = (o) => {
       if (!o.anchor) return;
       const p = apply(this.mapPose(this.keyframes[o.anchor.k].pose), o.anchor.local);
@@ -258,8 +327,8 @@ export class World {
       const p = apply(P, o.anchor.local);
       o.x = p[0]; o.z = p[2]; o.bottom = p[1] + o.h / 2;
       o.yaw = yawOf(P.R) + o.anchor.yaw;
+      if (o.cls === 'person' || Math.abs(o.bottom) < 0.35) o.bottom = 0;
     }
-    this.rebuild();
   }
 
   /** Remembers a detected object (map frame); repeated sightings within 0.8 m are merged. */
@@ -291,7 +360,7 @@ export class World {
   /** Places to navigate to by name: confirmed objects (and older-style landmarks). */
   confirmedLandmarks() {
     return [
-      ...this.objects.confirmed().map((o) => ({ id: o.id, cls: o.cls, x: o.x, y: o.bottom - o.h / 2, z: o.z, n: o.n, obj: true })),
+      ...this.objects.lasting().map((o) => ({ id: o.id, cls: o.cls, x: o.x, y: o.bottom - o.h / 2, z: o.z, n: o.n, obj: true })),
       ...this.landmarks.filter((l) => l.n >= 2),
     ];
   }
@@ -324,7 +393,7 @@ export class World {
   serialize(extra = {}) {
     return {
       kind: 'stereo-map', version: 1, saved: new Date().toISOString(), opts: this.o, align: this.align, floor: this.floor,
-      landmarks: this.landmarks, places: this.places, objects: this.objects.list, ...extra,
+      landmarks: this.landmarks, places: this.places, objects: this.objects.list.filter((o) => o.cls !== 'person'), ...extra,
       keyframes: this.keyframes.map((k) => ({
         id: k.id, t: k.t, R: k.pose.R, tt: k.pose.t, fuse: k.fuse, points: toB64(k.points.buffer), gray: toB64(k.gray.buffer),
         lc: k.lc && { uv: toB64(k.lc.uv.buffer), pts3: toB64(k.lc.pts3.buffer), desc: toB64(k.lc.desc.buffer), thumb: toB64(k.lc.thumb.buffer) },
@@ -368,6 +437,22 @@ export class World {
     }
     return buf;
   }
+}
+
+/** Least-squares plane y = a·x + b·z + c through points; returns its normal (a, −1, b), or null if they're all in a line. */
+function fitHeightPlane(pts) {
+  const n = pts.length;
+  let sx = 0, sz = 0, sy = 0;
+  for (const p of pts) { sx += p[0]; sz += p[2]; sy += p[1]; }
+  const mx = sx / n, mz = sz / n, my = sy / n;
+  let xx = 0, xz = 0, zz = 0, xy = 0, zy = 0;
+  for (const p of pts) {
+    const x = p[0] - mx, z = p[2] - mz, y = p[1] - my;
+    xx += x * x; xz += x * z; zz += z * z; xy += x * y; zy += z * y;
+  }
+  const det = xx * zz - xz * xz;
+  if (det / (n * n) < 0.25) return null; // spread over less than about 0.7 m × 0.7 m
+  return [(xy * zz - zy * xz) / det, -1, (zy * xx - xy * xz) / det];
 }
 
 /** Rotation taking unit vector a onto unit vector b. */

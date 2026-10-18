@@ -8,6 +8,7 @@ import { GoalPlanner } from './plan.js';
 import { LoopCloser } from './closer.js';
 import { estimateRotation } from './loop.js';
 import { measureBox } from './objects.js';
+import { extractWalls } from './walls.js';
 import { rawToRect, remap } from './rectify.js';
 import { disparityBM, localNormalize } from './dense.js';
 import { buildingScene, firstHit, poseAt, renderGray, tour, walk } from './building.js';
@@ -20,6 +21,7 @@ let closer = null, needReloc = false, lastReloc = 0, loops = 0;
 let aligned = false, alignTries = 0, rotated = false;
 let mono = false, depthPipe = null, depthBusy = Promise.resolve();
 const recent = new Map(); // frame id → { left, L, R, pose }, for placing objects detected in it
+let walls = [], lastWalls = 0, levels = 0;
 
 const TRANSFORMERS = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.1';
 const DEPTH_MODEL = 'onnx-community/metric3d-vit-small';
@@ -64,11 +66,14 @@ const post = (msg, transfer = []) => self.postMessage(msg, transfer);
 function setup(m) {
   cfg = m;
   const { w, h } = m.size;
-  vo = new StereoVO(m.rig, w, h, { maxDisp: Math.round((64 * w) / 320) });
+  const cloudRange = m.world.rangeMax ?? 10; // map out to here
+  vo = new StereoVO(m.rig, w, h, { maxDisp: Math.round((64 * w) / 320), cloudRange });
   world = new World(m.world);
   closer = new LoopCloser(vo.intr);
   mono = !!m.mono;
-  if (mono) vo = new StereoVO(m.rig, w, h, { mono: true });
+  if (mono) vo = new StereoVO(m.rig, w, h, { mono: true, maxRange: 15, cloudRange }); // the depth model sees far
+  walls = [];
+  lastWalls = levels = 0;
   world.o.minHits = mono ? 3 : 2; // model depth is noisier than stereo: want more views per voxel
   recent.clear();
   needReloc = false;
@@ -136,6 +141,8 @@ function process(left, right, t, gap, id, extra = {}, depth = null) {
       planner = null;
     }
   }
+  const relevel = world.levels !== levels;
+  if (relevel) redrawPath();
   const mp = world.mapPose(vo.pose);
   if (needReloc) r.status = 'reloc';
   const here = { x: mp.t[0], z: mp.t[2] };
@@ -155,12 +162,25 @@ function process(left, right, t, gap, id, extra = {}, depth = null) {
   }, [r.features.buffer, image.buffer, imageR.buffer]);
   if (loop) post({ type: 'loop', correction: loop.correction, loops });
   if (reloc) post({ type: 'reloc' });
-  if (loop) sendMap(true);
+  if (loop || relevel) sendMap(true);
   else if (r.keyframe && mapping && world.align) sendMap();
   return { r, mp };
 }
 
+/** After the map moved (re-levelled): the path walked comes from the keyframes again. */
+function redrawPath() {
+  levels = world.levels;
+  traj = world.keyframes.flatMap((k) => world.mapPose(k.pose).t);
+  lastTraj = null;
+  planner = null;
+}
+
 function sendMap(full = false) {
+  const now = performance.now();
+  if (full || now - lastWalls > 2000) {
+    lastWalls = now;
+    walls = extractWalls(world.voxels.values(), { minHits: world.o.minHits, exclude: world.objects.lasting() });
+  }
   if (full) {
     world.pendingPoints = [...world.voxels.values()].filter((v) => v.n >= world.o.minHits);
     world.pendingReset = true;
@@ -172,7 +192,7 @@ function sendMap(full = false) {
   if (grid) transfer.push(grid.data.buffer);
   post({
     type: 'map', ...pts, grid, trajectory, landmarks: world.confirmedLandmarks(), places: world.places,
-    stats: world.stats(), start: world.toMap([0, 0, 0]), objects: world.objects.confirmed().map(({ anchor, ...o }) => o),
+    stats: world.stats(), start: world.toMap([0, 0, 0]), objects: world.objects.confirmed().map(({ anchor, ...o }) => o), walls,
   }, transfer);
 }
 
@@ -292,7 +312,7 @@ const handlers = {
         rotated = true;
         cfg.rig = { ...cfg.rig, Rrel: rot.R, vOffsetPx: 0 };
         // The measured yaw only roughly fixes the scale, so let far points count for tracking.
-        vo = new StereoVO(cfg.rig, cfg.size.w, cfg.size.h, { maxDisp: vo.o.maxDisp, maxRange: 12 });
+        vo = new StereoVO(cfg.rig, cfg.size.w, cfg.size.h, { maxDisp: vo.o.maxDisp, maxRange: 12, cloudRange: vo.o.cloudRange });
         closer = new LoopCloser(vo.intr);
         post({ type: 'rotation', yaw: rot.yaw, pitch: rot.pitch, roll: rot.roll, angle: rot.angle, inliers: rot.inliers, R: rot.R });
       } else {
@@ -314,7 +334,7 @@ const handlers = {
         aligned = true;
         if (Math.abs(a.dy) > 0.6) {
           cfg.rig = { ...cfg.rig, vOffsetPx: (cfg.rig.vOffsetPx ?? 0) + a.dy };
-          vo = new StereoVO(cfg.rig, cfg.size.w, cfg.size.h, { maxDisp: vo.o.maxDisp, maxRange: vo.o.maxRange });
+          vo = new StereoVO(cfg.rig, cfg.size.w, cfg.size.h, { maxDisp: vo.o.maxDisp, maxRange: vo.o.maxRange, cloudRange: vo.o.cloudRange });
           closer = new LoopCloser(vo.intr);
         }
         post({ type: 'align', ...a, action: 'ok', vOffsetPx: cfg.rig.vOffsetPx ?? 0 });
@@ -365,12 +385,17 @@ const handlers = {
       const a = rawToRect(vo.rect, x, y), b = rawToRect(vo.rect, x + bw, y + bh);
       const box = measureBox({ ...det, bbox: [a[0], a[1], b[0] - a[0], b[1] - a[1]] }, depth, intr, mp);
       if (!box) continue;
+      box.t = performance.now() / 1000;
       world.addObject(box);
+      if (box.feet) world.addFeet(box.feet, box.t);
       const c = apply(toCam, [box.x, box.bottom - box.h / 2, box.z]); // camera-relative, for "what's in front"
       seen.push({ cls: box.cls, point: c, range: Math.hypot(...c), azimuth: (Math.atan2(c[0], c[2]) * 180) / Math.PI });
     }
     post({ type: 'seen', objects: seen });
-    sendMap();
+    if (world.levels !== levels) {
+      redrawPath();
+      sendMap(true);
+    } else sendMap();
   },
   place(m) {
     world.setPlace(m.name, m.x, m.z);
@@ -390,6 +415,7 @@ const handlers = {
     sendMap();
   },
   settings(m) {
+    if (m.world.rangeMax) vo.o.cloudRange = m.world.rangeMax;
     world.rebuild(m.world);
     cfg.world = { ...cfg.world, ...m.world };
     planner = null;

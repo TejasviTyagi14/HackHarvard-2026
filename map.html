@@ -57,6 +57,7 @@
           </div>
           <label class="clip"><input type="checkbox" id="inShowPoints" checked> Points</label>
           <label class="clip"><input type="checkbox" id="inShowObjects" checked> Objects</label>
+          <label class="clip"><input type="checkbox" id="inShowWalls" checked> Walls</label>
           <label class="clip">Hide above <input id="inClip" type="range" min="0.5" max="3" step="0.1" value="2.2"> <span id="clipVal">2.2 m</span></label>
         </div>
       </div>
@@ -146,7 +147,7 @@
         <div class="field"><label for="inCamHeight">Cameras' height above the floor</label><div class="input-unit"><input id="inCamHeight" type="number" step="0.05" min="0.2" max="2.5"><span>m</span></div><p class="help">Used until the floor has been seen; then it's measured.</p></div>
         <div class="field"><label for="inBodyHeight">Your height (taller things are overhead)</label><div class="input-unit"><input id="inBodyHeight" type="number" step="0.05" min="0.3" max="2.5"><span>m</span></div></div>
         <div class="field"><label for="inStepHeight">Step-over height (lower things don't block)</label><div class="input-unit"><input id="inStepHeight" type="number" step="0.01" min="0.02" max="0.5"><span>m</span></div></div>
-        <div class="field"><label for="inRange">Map out to</label><div class="input-unit"><input id="inRange" type="number" step="0.5" min="1" max="8"><span>m</span></div><p class="help">Stereo depth gets noisy past about 4 m with 12 cm between the cameras.</p></div>
+        <div class="field"><label for="inRange">Map out to</label><div class="input-unit"><input id="inRange" type="number" step="0.5" min="1" max="15"><span>m</span></div><p class="help">The one-camera depth model holds up to about 10 m indoors. With two cameras 12 cm apart, depth gets noisy past about 5 m.</p></div>
         <div class="field"><label for="inQuality">Quality</label><select id="inQuality"><option value="fast">Fast (320 px)</option><option value="detailed">Detailed (480 px, slower)</option></select></div>
         <label class="check"><input type="checkbox" id="inFps60"> Ask the cameras for 60 fps (halves the timing gap between them)</label>
         <label class="check"><input type="checkbox" id="inLandmarks"> Find objects (chairs, tables, …): add them to the 3D model at their size, and as places to go</label>

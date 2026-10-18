@@ -16,7 +16,7 @@ import { downloadBlob } from './recorder.js';
 const $ = (id) => document.getElementById(id);
 const MEASURE_KEY = 'stereo-distance:v1';
 const MAP_KEY = 'stereo-map:v1';
-const MAP_DEFAULTS = { cameras: 'two', camHeight: 1.3, bodyHeight: 1.9, stepHeight: 0.1, rangeMax: 4, quality: 'fast', landmarks: true, fps60: true };
+const MAP_DEFAULTS = { cameras: 'two', camHeight: 1.3, bodyHeight: 1.9, stepHeight: 0.1, rangeMax: 10, quality: 'fast', landmarks: true, fps60: true };
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -30,6 +30,7 @@ function save(key, value) {
 // The measuring page owns the rig numbers and camera choice; this page reads them.
 const rigSettings = load(MEASURE_KEY, { baselineCm: 12, angleDeg: 0, hfovDeg: 70, angleSplit: 'even', vOffset: 0, resolution: '1280x720', deviceIds: [null, null], units: 'm', tiltDeg: 0, talkFollowUp: true, talkSpeak: true, minScore: 0.5, model: 'lite_mobilenet_v2' });
 const settings = load(MAP_KEY, MAP_DEFAULTS);
+if (!settings.rangeV) { settings.rangeMax = Math.max(settings.rangeMax, 10); settings.rangeV = 2; } // the old default was 4 m
 
 const state = {
   mode: null, // 'cameras' | 'files' | 'demo'
@@ -177,12 +178,14 @@ function onMap(m) {
   state.trajectory = m.trajectory;
   state.landmarks = m.landmarks;
   state.objects = m.objects ?? [];
+  state.walls = m.walls ?? [];
   state.places = m.places;
   state.stats = m.stats;
   state.start = { x: m.start[0], z: m.start[2] };
   renderGrid();
   refreshDestinations();
   view3d?.setObjects(state.objects);
+  view3d?.setWalls(state.walls);
   view3d?.setMarkers([
     { label: 'start', x: state.start.x, z: state.start.z, kind: 'start' },
     ...state.places.map((p) => ({ label: p.name, x: p.x, z: p.z, kind: 'place' })),
@@ -197,7 +200,8 @@ function resetMapView() {
   view3d?.setRoute(null);
   view3d?.setGoal(null);
   view3d?.setObjects([]);
-  Object.assign(state, { pose: null, route: null, grid: null, places: [], landmarks: [], objects: [], trajectory: new Float32Array(0), stats: null, truth: null, status: 'init' });
+  view3d?.setWalls([]);
+  Object.assign(state, { pose: null, route: null, grid: null, places: [], landmarks: [], objects: [], walls: [], trajectory: new Float32Array(0), stats: null, truth: null, status: 'init' });
   stopNav(false);
   renderGrid();
   refreshDestinations();
@@ -634,11 +638,22 @@ function drawPlan() {
     if (label) { ctx.fillStyle = '#e2e8f0'; ctx.fillText(label, a + 7 * dpr, b); }
   };
   pin(state.start.x, state.start.z, '#a3e635', 'start');
+  // Walls as solid lines.
+  ctx.strokeStyle = '#cbd5e1';
+  ctx.lineWidth = 3 * dpr;
+  ctx.lineCap = 'round';
+  for (const w of state.walls ?? []) {
+    const [a, b] = P(w.x0, w.z0), [c, d] = P(w.x1, w.z1);
+    ctx.beginPath(); ctx.moveTo(a, b); ctx.lineTo(c, d); ctx.stroke();
+  }
   // Objects as footprints, sized and turned the way they stand.
+  ctx.lineCap = 'butt';
   ctx.fillStyle = 'rgba(192,132,252,0.35)';
   ctx.strokeStyle = '#c084fc';
   ctx.lineWidth = 1.5 * dpr;
   for (const o of state.objects ?? []) {
+    ctx.fillStyle = o.cls === 'person' ? 'rgba(251,113,133,0.45)' : 'rgba(192,132,252,0.35)';
+    ctx.strokeStyle = o.cls === 'person' ? '#fb7185' : '#c084fc';
     const fx = Math.sin(o.yaw), fz = Math.cos(o.yaw);
     ctx.beginPath();
     [[1, 1], [1, -1], [-1, -1], [-1, 1]].forEach(([a, b], i) => {
@@ -703,7 +718,7 @@ function refreshChips() {
   const s = state.stats;
   setChip('chipMap', s ? `${s.keyframes} keyframes · ${s.freeArea.toFixed(0)} m² mapped` : 'No map yet');
   setChip('chipFps', state.fps ? `${state.fps.toFixed(0)} fps` : '— fps');
-  setChip('chipFloor', { fitted: 'Floor found', assumed: 'Floor assumed', pending: 'Finding the floor…' }[state.floor] ?? '', state.floor === 'fitted' ? 'ok' : '');
+  setChip('chipFloor', { fitted: 'Floor found', people: 'Floor from people', assumed: 'Floor assumed', pending: 'Finding the floor…' }[state.floor] ?? '', state.floor === 'fitted' || state.floor === 'people' ? 'ok' : '');
   const t = state.timings;
   if (state.workerStatus) {
     $('camStats').textContent = state.workerStatus;
@@ -863,6 +878,7 @@ function wire() {
   }));
   $('inShowPoints').addEventListener('change', (e) => view3d?.setPointsVisible(e.target.checked));
   $('inShowObjects').addEventListener('change', (e) => view3d?.setObjectsVisible(e.target.checked));
+  $('inShowWalls').addEventListener('change', (e) => view3d?.setWallsVisible(e.target.checked));
   $('inClip').addEventListener('input', (e) => { view3d?.setClipHeight(Number(e.target.value)); $('clipVal').textContent = `${Number(e.target.value).toFixed(1)} m`; });
   $('btnMic').addEventListener('click', () => talk.toggle());
   $('askForm').addEventListener('submit', (e) => { e.preventDefault(); const q = $('askInput').value.trim(); if (q) { $('askInput').value = ''; talk.ask(q); } });
