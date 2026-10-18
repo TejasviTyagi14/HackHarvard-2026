@@ -117,7 +117,7 @@ function onAlign(a) {
     saveRig();
     if (Math.abs(a.dy) > 0.6) banner(`The cameras aren't quite level with each other (${Math.abs(a.dy * 640 / state.size.w).toFixed(0)} px); I've corrected for it.`, 'info');
   } else if (a.tries === 15) {
-    banner(`I can't match the two camera images (${a.matches} matches). Point them at something with texture, a meter or more away, and check both cameras face the same way on the bar.`, 'err');
+    banner(`I can't match the two camera images (${a.matches} matches). Compare the two views under Cameras: they should show the same scene, slightly shifted sideways. If one is a different camera, pick the pair on the Measure page; if they point different ways, straighten them on the bar.`, 'err');
   }
 }
 
@@ -512,13 +512,40 @@ function onTalkState(st, detail = '') {
 // ---------------------------------------------------------------------------------------
 // Drawing: the camera view with tracked features, and the floor plan.
 
-function drawCamera(m) {
-  const c = $('camView'), ctx = c.getContext('2d');
-  const { w, h } = m.size;
-  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+function paintGray(canvas, gray, w, h) {
+  const ctx = canvas.getContext('2d');
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
   const img = ctx.createImageData(w, h);
-  for (let i = 0, j = 0; i < w * h; i++, j += 4) { const g = m.image[i]; img.data[j] = img.data[j + 1] = img.data[j + 2] = g; img.data[j + 3] = 255; }
+  let s = 0, q = 0;
+  for (let i = 0, j = 0; i < w * h; i++, j += 4) {
+    const g = gray[i];
+    img.data[j] = img.data[j + 1] = img.data[j + 2] = g;
+    img.data[j + 3] = 255;
+    s += g; q += g * g;
+  }
   ctx.putImageData(img, 0, 0);
+  // Same rows in both views, to judge whether the cameras are level with each other.
+  ctx.strokeStyle = 'rgba(251,191,36,0.55)';
+  ctx.setLineDash([4, 4]);
+  ctx.lineWidth = 1;
+  for (let k = 1; k < 6; k++) { const y = Math.round((h * k) / 6) + 0.5; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
+  ctx.setLineDash([]);
+  const mean = s / (w * h);
+  return { ctx, mean, std: Math.sqrt(Math.max(0, q / (w * h) - mean * mean)) };
+}
+
+function drawCamera(m) {
+  const { w, h } = m.size;
+  const { ctx } = paintGray($('camView'), m.image, w, h);
+  if (m.imageR) {
+    const right = paintGray($('camViewR'), m.imageR, w, h);
+    // A flat, featureless right picture: unplugged, covered, or starved of USB bandwidth.
+    const blank = right.std < 4;
+    if (blank && !state.warnedBlank && state.mode === 'cameras') {
+      state.warnedBlank = true;
+      banner(`The right camera's picture is ${right.mean < 20 ? 'black' : 'blank'}. Check it's uncovered and plugged in; if both share one USB hub, plug one into another port, or untick 60 fps under Mapping settings.`, 'err');
+    }
+  }
   ctx.fillStyle = m.status === 'ok' ? '#34d399' : '#f87171';
   for (let i = 0; i < m.features.length; i += 2) ctx.fillRect(m.features[i] - 1, m.features[i + 1] - 1, 3, 3);
   if (m.keyframe) { ctx.strokeStyle = '#fbbf24'; ctx.lineWidth = 3; ctx.strokeRect(1.5, 1.5, w - 3, h - 3); }
@@ -753,6 +780,15 @@ function wire() {
   }));
   $('fileInput').addEventListener('change', (e) => { if (e.target.files.length) startRecording(e.target.files); });
   $('btnTour').addEventListener('click', () => startDemo('tour'));
+  $('btnSwapCams').addEventListener('click', () => {
+    if (state.mode !== 'cameras' && state.mode !== 'files') return;
+    state.sources.reverse();
+    rigSettings.deviceIds = [...(rigSettings.deviceIds ?? [])].reverse();
+    saveRig();
+    // Start tracking over with the new order.
+    startWorker();
+    initWorker(state.size);
+  });
   $('btnWalk').addEventListener('click', () => startDemo('walk'));
   $('btnMapping').addEventListener('click', () => setMapping(!state.mapping));
   $('btnNew').addEventListener('click', () => {

@@ -93,11 +93,12 @@ function process(left, right, t, gap, id, extra = {}) {
   if (r.status === 'ok') lastHere = here;
   const route = r.status === 'ok' ? replan(here, now) : null;
   const image = new Uint8ClampedArray(r.image);
+  const imageR = new Uint8ClampedArray(vo.last.R);
   post({
     type: 'result', id, status: r.status, x: here.x, z: here.z, y: mp.t[1], heading: headingOf(mp.R), pose: mp,
     inliers: r.inliers, rmse: r.rmse, shiftPx: r.shiftPx, keyframe: !!r.keyframe, timings: r.timings,
-    vo: r.stats, features: r.features, image, size: cfg.size, floor: world.floor, route, mapping, loops, depthInfo: r.depthInfo, ...extra,
-  }, [r.features.buffer, image.buffer]);
+    vo: r.stats, features: r.features, image, imageR, size: cfg.size, floor: world.floor, route, mapping, loops, depthInfo: r.depthInfo, ...extra,
+  }, [r.features.buffer, image.buffer, imageR.buffer]);
   if (loop) post({ type: 'loop', correction: loop.correction, loops });
   if (reloc) post({ type: 'reloc' });
   if (loop) sendMap(true);

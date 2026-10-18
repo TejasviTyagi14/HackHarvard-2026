@@ -249,13 +249,14 @@ export class StereoVO {
   checkAlignment(left, right) {
     const w = this.w, h = this.h;
     const L = remap(left, w, h, this.rect.mapL), R = remap(right, w, h, this.rect.mapR);
-    const corners = goodFeatures(buildPyramid(L, w, h, 1)[0], { maxCorners: 30, minDistance: 24, border: 14 });
+    const corners = goodFeatures(buildPyramid(L, w, h, 1)[0], { maxCorners: 40, minDistance: 20, border: 14 });
     const gL = new GrayFrame(w, h, L), gR = new GrayFrame(w, h, R);
     const dx = [], dy = [];
     for (let k = 0; k < corners.length; k += 2) {
-      const m = bandSearch(gL, gR, corners[k], corners[k + 1], { r: 6, band: 16 });
-      if (!m.ok || m.score < 0.85 || m.margin < 0.05) continue;
-      const back = bandSearch(gR, gL, m.uB, m.vB, { r: 6, band: 16 });
+      // A wide band: cameras on a home-made bar can sit 20+ px apart vertically at this size.
+      const m = bandSearch(gL, gR, corners[k], corners[k + 1], { r: 7, band: 30 });
+      if (!m.ok || m.score < 0.78 || m.margin < 0.03) continue;
+      const back = bandSearch(gR, gL, m.uB, m.vB, { r: 7, band: 30 });
       if (!back.ok || Math.abs(back.uB - m.uA) > 1.5 || Math.abs(back.vB - m.vA) > 1.5) continue;
       dx.push(m.uA - m.uB);
       dy.push(m.vB - m.vA);

@@ -75,8 +75,12 @@
 
     <aside class="mapside">
       <section class="card">
-        <div class="card-head"><h2>Left camera</h2><span class="muted small">green dots: points being tracked</span></div>
-        <canvas id="camView" class="camview" width="320" height="180"></canvas>
+        <div class="card-head"><h2>Cameras</h2><button type="button" class="btn small" id="btnSwapCams" title="Swap left and right">⇄ Swap</button></div>
+        <div class="campair">
+          <figure><figcaption>Left · <span class="muted">green: tracked points</span></figcaption><canvas id="camView" class="camview" width="320" height="180"></canvas></figure>
+          <figure><figcaption>Right</figcaption><canvas id="camViewR" class="camview" width="320" height="180"></canvas></figure>
+        </div>
+        <p class="help">Both views should show the same scene, slightly shifted sideways. The dashed lines are the same rows in each; a thing should sit on the same line in both.</p>
         <p class="muted small" id="camStats"></p>
       </section>
 
